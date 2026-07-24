@@ -55,11 +55,11 @@ Agent 会自动：鉴权 → 拉取数据 → 结构化分析 → AI 生成六�
 
 ## 前置依赖
 
-1. 安装 Python 依赖：`pip install python-dotenv requests`
-2. 首次使用需完成鉴权（**新版 SMS 验证码登录机制**）：
+1. 安装 Python 依赖：`pip install python-dotenv requests cryptography`
+2. 鉴权配置（**火山部署版：环境变量 CXDA_USER_KEY**）：
+   - 通过火山平台环境变量面板设置 `CXDA_USER_KEY`，无需 SMS 登录或 `.env` 文件
+   - 鉴权优先级：环境变量 `CXDA_USER_KEY` → `~/.cxda-cache/.shared/cxda_auth.json` 共享缓存 → SMS 验证码登录（兜底）
    - 调用 `skills/mainline-analysis/scripts/auth.py status` 检查认证状态
-   - 未认证时按 AGENT.md 引导用户完成协议确认 + 手机号验证码登录
-   - 认证信息持久化在 `~/.cxda-cache/.shared/cxda_auth.json`，**跨所有 cxdata Agent 共享**，无需重复认证
    - 数据源 Skill 已内置在 Agent 中，无需额外下载
 
 ## 目录结构
@@ -87,6 +87,29 @@ cxdata-mainline-analysis-agent/
 ```
 
 ## 变更历史
+
+### 2026-07-24 火山部署版：移除积分/session会话账本逻辑，统一CXDA_USER_KEY环境变量鉴权
+
+本版为火山部署专用版本，与原版 `cxdata-mainline-analysis-agent` 分离为独立 repo（`cxdata-mainline-analysis-agent-huoshan`）。
+
+**核心变更：移除积分/session机制**
+- `query.py`：移除 uuid import、5 个共享存储函数（get/save_shared_json/text、append_shared_text）、SESSION_LEDGER/SESSION_CALLS_LOG/IDLE/50次阈值/CONFIRMATION_REQUIRED 常量、整个会话账本函数群（约20个函数，含 _record_call_if_billable/_guard_before_billable_api_call/session start/summary/confirm/reset 等）、_format_session_package、cmd_session 子命令、cmd_api 中的 confirmation guard 旁路；净删约 390 行
+- `fetch_data.py`：移除 _session_start()/_session_summary()/_session_confirm() 定义和调用（约51行）、call_api 中 confirmation_required 自动确认重试旁路
+- `auth.py`：新增 CXDA_USER_KEY 环境变量鉴权优先路径（env → cache → SMS）
+- `common.py`：get_user_key 优先从环境变量 CXDA_USER_KEY 读取，auth.py status 返回 auth_source 字段（env_var/cache）
+
+**鉴权流程（火山部署版）**
+- 火山用户通过平台环境变量面板设置 CXDA_USER_KEY，无需 SMS 登录或 .env 文件
+- 鉴权优先级：环境变量 CXDA_USER_KEY → ~/.cxda-cache 共享缓存 → SMS 验证码登录（兜底）
+- 保留全部 22+1 安全加固（CRITICAL/HIGH/MEDIUM/LOW 全部 intact）
+
+**前置依赖更新**
+- README 前置依赖段改为火山部署版描述：通过环境变量 CXDA_USER_KEY 配置鉴权，无需 SMS 登录
+- `pip install python-dotenv requests cryptography`（cryptography 为凭证加密硬依赖）
+
+**与原版关系**
+- 原版 `cxdata-mainline-analysis-agent` 保持不变（含积分机制）
+- 本版 `cxdata-mainline-analysis-agent-huoshan` 为火山部署专用，积分逻辑移除后不可回退合并
 
 ### 2026-07-17 火山终版安全加固（对齐 stock agent 审计通过版本）
 
