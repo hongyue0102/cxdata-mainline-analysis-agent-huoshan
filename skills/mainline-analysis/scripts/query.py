@@ -17,7 +17,6 @@ import argparse
 import json
 import re
 import sys
-import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -34,32 +33,10 @@ from common import (
     check_terms_accepted,
     output_json,
     output_error,
-    get_shared_json,
-    save_shared_json,
-    get_shared_text,
-    save_shared_text,
-    append_shared_text,
 )
 
 
-# ── 积分统计相关常量 ──────────────────────────────────────────────────
-
-# 接口成功的返回码
 SUCCESS_CODE = "10000"
-
-# 公域会话账本文件（账户级，跨 Skill 共享，保存会话元数据）
-SESSION_LEDGER_FILE = "cxda_session_ledger.json"
-
-# 公域计费调用日志（账户级，跨 Skill 共享，每行一个 JSON 调用记录）
-SESSION_CALLS_LOG_FILE = "cxda_session_calls.jsonl"
-
-# 兜底：距上次计费调用超过该分钟数，视为新会话（防止 Agent 未显式 start）
-SESSION_IDLE_MINUTES = 30
-
-# 单轮会话达到该成功计费调用次数后，需要用户确认才能继续
-BILLABLE_CALL_CONFIRMATION_THRESHOLD = 50
-
-CONFIRMATION_REQUIRED_STATUS = "confirmation_required"
 
 _TIME_FMT = "%Y-%m-%d %H:%M:%S"
 _DISPLAY_TZ = timezone(timedelta(hours=8))
@@ -100,24 +77,6 @@ def _validate_api_id(api_id):
     return api_id
 
 
-# ── 会话积分账本 ──────────────────────────────────────────────────────
-
-def _to_number(value):
-    """将消耗值安全转为数字，失败返回 None"""
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return value
-    try:
-        text = str(value).strip()
-        if text == "":
-            return None
-        num = float(text)
-        return int(num) if num.is_integer() else num
-    except (ValueError, TypeError):
-        return None
-
-
 def _format_timestamp(value, default="-"):
     """将后端毫秒时间戳格式化为北京时间 yyyy-MM-dd HH:mm:ss。"""
     if value is None or isinstance(value, bool):
@@ -132,199 +91,6 @@ def _format_timestamp(value, default="-"):
         return datetime.fromtimestamp(timestamp, _DISPLAY_TZ).strftime(_TIME_FMT)
     except (ValueError, TypeError, OSError, OverflowError):
         return default
-
-
-def _has_display_value(value):
-    """判断字段是否应参与展示，0 是有效额度，空值和占位符不是。"""
-    if value is None:
-        return False
-    if isinstance(value, str):
-        return value.strip() not in ("", "-")
-    return True
-
-
-def _new_ledger(now):
-    return {
-        "session_id": uuid.uuid4().hex,
-        "session_start": now.strftime(_TIME_FMT),
-        "started_ts": now.timestamp(),
-        "last_call_ts": now.timestamp(),
-        "requires_confirmation": False,
-        "confirmed_after_50": False,
-        "confirmation_required_at_count": None,
-        "confirmed_at": None,
-    }
-
-
-def _ensure_ledger_confirmation_state(ledger):
-    changed = False
-    for key, default in (
-        ("requires_confirmation", False),
-        ("confirmed_after_50", False),
-        ("confirmation_required_at_count", None),
-        ("confirmed_at", None),
-    ):
-        if key not in ledger:
-            ledger[key] = default
-            changed = True
-
-    if not ledger.get("session_id"):
-        ledger["session_id"] = uuid.uuid4().hex
-        changed = True
-
-    return changed
-
-
-def _clear_session_calls_log():
-    save_shared_text(SESSION_CALLS_LOG_FILE, "")
-
-
-def _read_session_calls_log(session_id=None):
-    calls = []
-    content = get_shared_text(SESSION_CALLS_LOG_FILE)
-    for line in content.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            call = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(call, dict):
-            continue
-        if session_id and call.get("session_id") != session_id:
-            continue
-        calls.append(call)
-    return calls
-
-
-def _get_ledger_calls(ledger):
-    if not isinstance(ledger, dict):
-        return []
-
-    calls = []
-    legacy_calls = ledger.get("calls")
-    if isinstance(legacy_calls, list):
-        calls.extend(call for call in legacy_calls if isinstance(call, dict))
-
-    calls.extend(_read_session_calls_log(ledger.get("session_id")))
-    return calls
-
-
-def _call_timestamp(call):
-    ts = call.get("ts") if isinstance(call, dict) else None
-    if ts is not None and not isinstance(ts, bool):
-        try:
-            return float(ts)
-        except (ValueError, TypeError):
-            pass
-
-    text = call.get("time") if isinstance(call, dict) else None
-    if isinstance(text, str) and text.strip():
-        try:
-            return datetime.strptime(text.strip(), _TIME_FMT).replace(tzinfo=_DISPLAY_TZ).timestamp()
-        except ValueError:
-            return None
-    return None
-
-
-def _format_session_call(call):
-    return {
-        "time": call.get("time", "-"),
-        "api_id": call.get("api_id", ""),
-        "consumed": call.get("consumed"),
-    }
-
-
-def _is_ledger_idle_expired(ledger, now, calls=None):
-    if not isinstance(ledger, dict):
-        return False
-
-    last_ts = None
-    for call in calls or []:
-        call_ts = _call_timestamp(call)
-        if call_ts is not None and (last_ts is None or call_ts > last_ts):
-            last_ts = call_ts
-
-    if last_ts is None:
-        last_ts = ledger.get("last_call_ts") or ledger.get("started_ts")
-    try:
-        return (now.timestamp() - float(last_ts)) > SESSION_IDLE_MINUTES * 60
-    except (ValueError, TypeError):
-        return False
-
-
-def _get_active_ledger(now):
-    ledger = get_shared_json(SESSION_LEDGER_FILE)
-
-    # 无账本 / 空账本 / 空闲超时 → 开新会话
-    if not isinstance(ledger, dict) or not ledger:
-        ledger = _new_ledger(now)
-        _clear_session_calls_log()
-        save_shared_json(SESSION_LEDGER_FILE, ledger)
-        return ledger, []
-
-    changed = _ensure_ledger_confirmation_state(ledger)
-    calls = _get_ledger_calls(ledger)
-    if _is_ledger_idle_expired(ledger, now, calls):
-        ledger = _new_ledger(now)
-        _clear_session_calls_log()
-        save_shared_json(SESSION_LEDGER_FILE, ledger)
-        return ledger, []
-
-    if changed:
-        save_shared_json(SESSION_LEDGER_FILE, ledger)
-
-    return ledger, calls
-
-
-def _guard_before_billable_api_call():
-    """
-    在发起远端 API 调用前检查会话账本。
-    已有 50 次成功计费调用且尚未确认时，暂停而不调用接口，避免产生第 51 次消耗。
-    """
-    now = datetime.now()
-    ledger, calls = _get_active_ledger(now)
-    call_count = len(calls)
-    if call_count < BILLABLE_CALL_CONFIRMATION_THRESHOLD or ledger.get("confirmed_after_50") is True:
-        return
-
-    ledger["requires_confirmation"] = True
-    ledger["confirmation_required_at_count"] = call_count
-    save_shared_json(SESSION_LEDGER_FILE, ledger)
-    return call_count
-
-
-def _record_call_if_billable(api_id, data):
-    """
-    仅当「成功(code==10000) 且 消耗>0」时，将本次调用计入会话账本。
-    失败、消耗缺失、消耗为 0 均不计入。记账异常不影响业务输出。
-    """
-    try:
-        if not isinstance(data, dict):
-            return
-        if str(data.get("code")) != SUCCESS_CODE:
-            return
-        consumed = _to_number(data.get("consumePoints"))
-        if consumed is None or consumed <= 0:
-            return
-
-        now = datetime.now()
-        ledger, _calls = _get_active_ledger(now)
-        call = {
-            "session_id": ledger.get("session_id"),
-            "ts": now.timestamp(),
-            "time": now.strftime(_TIME_FMT),
-            "api_id": api_id,
-            "consumed": consumed,
-        }
-        append_shared_text(
-            SESSION_CALLS_LOG_FILE,
-            json.dumps(call, ensure_ascii=False, separators=(",", ":")) + "\n"
-        )
-    except Exception:
-        # 记账为旁路逻辑，任何异常都不应影响接口数据返回
-        pass
 
 
 def _format_package_item(item):
@@ -346,7 +112,7 @@ def _format_package_item(item):
 
 
 def _query_package_result(user_key, api_main=""):
-    """查询并格式化用户套餐额度，供 package 和 session summary 复用。"""
+    """查询并格式化用户套餐额度，供 package 子命令复用。"""
     if not user_key:
         return {
             "code": "10500",
@@ -386,23 +152,6 @@ def _query_package_result(user_key, api_main=""):
         "packages": formatted,
     }
 
-
-def _format_session_package(item):
-    """会话汇总只输出套餐剩余积分关键信息，避免跨套餐合并剩余额度。"""
-    balance = item.get("balance", "")
-    total_money = item.get("total_money", "")
-    integral = "{}/{}".format(balance, total_money) if (
-        _has_display_value(balance) and _has_display_value(total_money)
-    ) else ""
-    return {
-        "package_name": item.get("package_name", "-"),
-        "balance": balance,
-        "total_money": total_money,
-        "integral": integral,
-        "day_balance": item.get("day_balance", ""),
-        "day_money": item.get("day_money", ""),
-        "valid_end": item.get("valid_end", "-"),
-    }
 
 
 # ── 单次运行内接口最大分页缓存 ────────────────────────────────────────
@@ -494,16 +243,6 @@ def cmd_api(api_id, params):
         return
     
     try:
-        confirmation_required_count = _guard_before_billable_api_call()
-        if confirmation_required_count is not None:
-            output_json({
-                "error": "本轮会话已成功调用 {} 次计费接口，请先获得用户确认后再继续。".format(confirmation_required_count),
-                "status": CONFIRMATION_REQUIRED_STATUS,
-                "call_count": confirmation_required_count,
-                "next_action": "请用户确认是否继续调用；确认后执行 query.py session confirm",
-            })
-            return
-
         params = _apply_default_page_size(api_id, params)
         token = ensure_token()
 
@@ -514,115 +253,10 @@ def cmd_api(api_id, params):
             f"{BASE_URL}/webservice/cxdata/{api_id}.htm",
             params=request_params
         )
-        # 旁路：成功且消耗>0时计入会话积分账本（不改变业务输出结构）
-        _record_call_if_billable(api_id, data)
         output_json(data)
     except Exception as e:
         output_error(str(e))
 
-
-# ── 子命令：session（会话积分统计）──────────────────────────────────────
-
-def cmd_session(action):
-    """
-    会话积分统计。会话边界由调用方（Agent）决定，脚本只负责记账与汇总。
-
-      start   开始/重置当前会话（清空账本，记录起始时间）
-      summary 汇总当前会话的消耗（合计 + 明细）和各套餐剩余积分
-      confirm 记录用户已确认超过 50 次后继续调用
-      reset   清空当前会话账本
-    """
-    # summary 需要查询套餐额度，需要协议前置
-    if action == "summary":
-        accepted, error_response = check_terms_accepted()
-        if not accepted:
-            output_json(error_response)
-            return
-    
-    now = datetime.now()
-
-    if action == "start":
-        ledger = _new_ledger(now)
-        _clear_session_calls_log()
-        save_shared_json(SESSION_LEDGER_FILE, ledger)
-        output_json({
-            "success": True,
-            "message": "会话已开始",
-            "session_start": ledger["session_start"],
-        })
-        return
-
-    if action == "reset":
-        save_shared_json(SESSION_LEDGER_FILE, {})
-        _clear_session_calls_log()
-        output_json({"success": True, "message": "会话账本已清空"})
-        return
-
-    if action == "confirm":
-        ledger = get_shared_json(SESSION_LEDGER_FILE)
-        if not isinstance(ledger, dict) or not ledger:
-            output_json({
-                "success": False,
-                "status": "confirmation_not_required",
-                "message": "没有可确认的会话账本",
-            })
-            return
-
-        if _ensure_ledger_confirmation_state(ledger):
-            save_shared_json(SESSION_LEDGER_FILE, ledger)
-        calls = _get_ledger_calls(ledger)
-        if len(calls) < BILLABLE_CALL_CONFIRMATION_THRESHOLD:
-            output_json({
-                "success": False,
-                "status": "confirmation_not_required",
-                "message": "当前会话尚未达到需要确认的调用次数",
-                "call_count": len(calls),
-            })
-            return
-
-        ledger["requires_confirmation"] = False
-        ledger["confirmed_after_50"] = True
-        ledger["confirmation_required_at_count"] = ledger.get("confirmation_required_at_count") or len(calls)
-        ledger["confirmed_at"] = now.strftime(_TIME_FMT)
-        save_shared_json(SESSION_LEDGER_FILE, ledger)
-        output_json({
-            "success": True,
-            "message": "已确认继续调用",
-            "call_count": len(calls),
-            "confirmed_at": ledger["confirmed_at"],
-        })
-        return
-
-    # summary
-    ledger = get_shared_json(SESSION_LEDGER_FILE)
-    calls = _get_ledger_calls(ledger)
-    visible_calls = [_format_session_call(call) for call in calls]
-    total_consumed = 0
-    for call in calls:
-        num = _to_number(call.get("consumed"))
-        if num is not None:
-            total_consumed += num
-    try:
-        package_result = _query_package_result(get_user_key())
-    except Exception as e:
-        package_result = {
-            "code": "10500",
-            "msg": str(e),
-            "packages": [],
-        }
-    packages = []
-    if str(package_result.get("code")) == SUCCESS_CODE:
-        packages = [_format_session_package(item) for item in package_result.get("packages", [])]
-    output_json({
-        "success": True,
-        "session_start": ledger.get("session_start") if isinstance(ledger, dict) else None,
-        "call_count": len(calls),
-        "total_consumed": total_consumed,
-        "calls": visible_calls,
-        "package_count": len(packages),
-        "packages": packages,
-        "package_error": None if str(package_result.get("code")) == SUCCESS_CODE else package_result.get("msg"),
-    })
 
 
 # ── 子命令：page-size（接口分页大小查询）────────────────────────────────
@@ -817,30 +451,6 @@ def main():
     )
     p_pkg.add_argument("--api-main", default="", help="接口访问标识（可选，传入时只返回包含该接口的套餐）")
 
-    # session
-    p_session = subparsers.add_parser(
-        "session",
-        help="会话积分统计",
-        description="会话积分统计。会话边界由调用方（Agent）决定，脚本负责记账、汇总和查询套餐剩余额度。",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-示例：
-  python query.py session start      # 会话开始时调用，重置账本
-  python query.py session confirm    # 用户确认超过50次后继续调用
-  python query.py session summary    # 会话结束时调用，汇总本次消耗和套餐剩余额度
-  python query.py session reset      # 清空账本
-
-说明：
-  - api 子命令在「成功(code=10000) 且 消耗>0」时自动记账，失败/0消耗不计入
-  - 当前会话已有50次成功计费调用且未确认时，api 会在调用前返回 confirmation_required
-  - 用户确认继续后，先执行 session confirm，再继续 api 调用
-  - summary 返回 call_count（会话调用接口数量）、total_consumed（本次会话消耗合计）、calls（明细）
-  - summary 同时返回 packages，每个套餐包含：package_name、balance、total_money、integral、day_balance、day_money、valid_end
-  - 不同套餐的剩余积分不能混合合计，必须逐套餐展示
-        """
-    )
-    p_session.add_argument("action", choices=["start", "confirm", "summary", "reset"], help="会话操作")
-
     args = parser.parse_args()
 
     if args.command == "api":
@@ -850,8 +460,6 @@ def main():
         cmd_page_size(args.api_id)
     elif args.command == "package":
         cmd_package(args.api_main)
-    elif args.command == "session":
-        cmd_session(args.action)
 
 
 if __name__ == "__main__":

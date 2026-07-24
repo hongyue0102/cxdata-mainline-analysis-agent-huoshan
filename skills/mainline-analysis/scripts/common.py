@@ -202,7 +202,7 @@ def _cli_call(command: str, subcommand: str = None, args: list = None, raw_outpu
     _ENV_WHITELIST_PREFIXES = (
         "PATH", "HOME", "USER", "USERNAME", "LOGNAME", "LANG", "LC_",
         "TERM", "TMPDIR", "TEMP", "TMP", "SHELL", "PWD",
-        "CXDA_CACHE_", "CLAUDE_WORKSPACE",
+        "CXDA_CACHE_", "CXDA_USER_KEY", "CLAUDE_WORKSPACE",
         "HOSTNAME", "HOST",
     )
     _ENV_BLACKLIST_EXACT = {
@@ -265,9 +265,17 @@ def check_terms_accepted() -> Tuple[bool, dict]:
     """
     检查用户是否已接受服务协议
     
+    优先级：
+    1. 环境变量 CXDA_USER_KEY 存在且有效 → 隐式已接受协议
+    2. 缓存中 terms_accepted=true → 显式已接受
+    
     Returns:
         (accepted, error_response): accepted=True 时可继续，False 时返回结构化错误
     """
+    env_key = os.environ.get("CXDA_USER_KEY")
+    if env_key and _is_valid_user_key(env_key):
+        return True, {}
+
     auth = get_cached_auth()
     accepted = auth.get("terms_accepted", False)
     if not accepted:

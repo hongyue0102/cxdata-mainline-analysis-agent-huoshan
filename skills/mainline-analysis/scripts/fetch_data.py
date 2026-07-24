@@ -62,47 +62,10 @@ def _run_query(api_id: str, params: dict) -> dict:
     return json.loads(stdout)
 
 
-def _session_confirm():
-    """调用 query.py session confirm，解除 50 次限制阻断。"""
-    cmd = [sys.executable, str(_QUERY_SCRIPT), "session", "confirm"]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=str(SCRIPT_DIR))
-    if result.returncode != 0:
-        raise RuntimeError(f"session confirm 失败: {result.stderr[:200]}")
-
-
-def _session_start():
-    """调用 query.py session start，重置本轮积分账本。
-
-    规范要求：本轮首次业务 api 调用前执行一次，确保积分记账从0开始、
-    会话统计以 session summary 返回为准（不依赖 AI 自行统计消耗）。
-    """
-    cmd = [sys.executable, str(_QUERY_SCRIPT), "session", "start"]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=str(SCRIPT_DIR))
-    if result.returncode != 0:
-        print(f"  [WARN] session start 失败（不影响取数）: {result.stderr[:200]}")
-
-
-def _session_summary():
-    """调用 query.py session summary，输出本轮积分消耗汇总（以 query.py 记账为准）。"""
-    cmd = [sys.executable, str(_QUERY_SCRIPT), "session", "summary"]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=str(SCRIPT_DIR))
-    if result.returncode != 0 or not result.stdout.strip():
-        return
-    try:
-        data = json.loads(result.stdout)
-        if data.get("success"):
-            print(f"\n=== 积分消耗汇总（以 session summary 为准）===")
-            print(f"  计费调用次数: {data.get('call_count')}")
-            print(f"  累计消耗积分: {data.get('total_consumed')}")
-    except Exception:
-        pass
-
-
 def call_api(api_id: str, params: dict) -> dict:
     """通过 query.py 调用业务接口（仅允许 _ALLOWED_APIS 中的接口）。
 
-    query.py 内部处理：认证、token 缓存、gzip+base64 解码、积分计数、50 次限制。
-    触发 50 次限制时自动调 session confirm 解除阻断并重试一次（批量取数场景）。
+    query.py 内部处理：认证、token 缓存、gzip+base64 解码。
     返回的 dict 与原 HTTP 直连版本兼容：含 code/result/totalCount 等字段。
     """
     if api_id not in _ALLOWED_APIS:
@@ -111,12 +74,6 @@ def call_api(api_id: str, params: dict) -> dict:
 
     try:
         data = _run_query(api_id, params)
-
-        # 50 次限制触发：自动 confirm 后重试一次
-        if data.get("status") == "confirmation_required":
-            print(f"  [AUTO-CONFIRM] {api_id}: 触发 50 次限制，自动 confirm 后重试")
-            _session_confirm()
-            data = _run_query(api_id, params)
 
         # 认证失败不重试
         if data.get("status") in ("failed", "terms_not_accepted"):
@@ -304,9 +261,6 @@ def main():
 
     print(f"=== A股主线识别数据获取 ===")
     print(f"目标日期: {date}")
-
-    # 规范：本轮首次业务调用前 session start，重置积分账本（记账以 query.py 为准）
-    _session_start()
 
     output_dir = Path(__file__).parent / "data"
     output_dir.mkdir(exist_ok=True)
@@ -512,9 +466,6 @@ def main():
     elapsed = time.time() - t_start
     print(f"\n=== 完成！日期: {date}, 总成交: {len(valid_quotes)}, 涨停: {len(all_limit_up)}, 炸板: {len(all_broken)}, 跌停: {len(all_limit_down)} ===")
     print(f"总耗时: {elapsed:.0f}s")
-
-    # 规范：会话结束 session summary，输出本轮积分消耗（记账以 query.py 为准，不自行统计）
-    _session_summary()
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ CXDA Skill 授权模块
 import argparse
 import json
 import logging
+import os
 import re
 import sys
 import time
@@ -157,6 +158,16 @@ def _read_secret_from_stdin(field: str) -> str:
 
 def cmd_terms_check():
     """检查用户是否已接受服务协议"""
+    user_key = get_user_key()
+    if user_key:
+        _audit("terms-check", True, terms_accepted=True, auth_source="env_or_cache")
+        print(json.dumps({
+            "success": True,
+            "terms_accepted": True,
+            "message": "已具备有效 CXDA_USER_KEY（环境变量或缓存），隐式接受服务协议"
+        }, ensure_ascii=False))
+        return
+
     auth = get_cached_auth()
     accepted = auth.get(TERMS_ACCEPTED_KEY, False)
 
@@ -393,16 +404,20 @@ def cmd_verify():
 # ── 命令：status ─────────────────────────────────────────────────────
 
 def cmd_status():
-    """查看当前认证状态（本地检查缓存）"""
+    """查看当前认证状态（本地检查缓存 + 环境变量）"""
     user_key = get_user_key()
     auth = get_cached_auth()
     phone_masked = auth.get("phone_masked", "")
     authed_at = auth.get("authed_at", "")
-    terms_accepted = auth.get(TERMS_ACCEPTED_KEY, False)
+    terms_accepted = bool(user_key) or auth.get(TERMS_ACCEPTED_KEY, False)
+
+    env_key = os.environ.get("CXDA_USER_KEY", "")
+    auth_source = "env_var" if env_key else "cache"
 
     _audit("status", True,
            authenticated=bool(user_key),
-           terms_accepted=bool(terms_accepted))
+           terms_accepted=bool(terms_accepted),
+           auth_source=auth_source)
 
     if user_key:
         print(json.dumps({
@@ -411,15 +426,16 @@ def cmd_status():
             "terms_accepted": terms_accepted,
             "phone_masked": phone_masked,
             "authed_at": authed_at,
+            "auth_source": auth_source,
             "CXDA_USER_KEY": mask_user_key(user_key),
-            "message": "已认证"
+            "message": "已认证（{}）".format("环境变量" if auth_source == "env_var" else "本地缓存")
         }, ensure_ascii=False))
     else:
         print(json.dumps({
             "success": True,
             "authenticated": False,
             "terms_accepted": terms_accepted,
-            "message": "未认证，请先完成协议确认并通过 send-code + verify 完成认证"
+            "message": "未认证，请配置环境变量 CXDA_USER_KEY 或通过 send-code + verify 完成认证"
         }, ensure_ascii=False))
 
 

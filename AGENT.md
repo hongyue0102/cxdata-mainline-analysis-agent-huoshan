@@ -2,7 +2,7 @@
 
 ## 基础信息
 
-name: cxdata-mainline-analysis-agent
+name: cxdata-mainline-analysis-agent-huoshan
 version: 1.0.0
 author: caixindata
 description: A股市场结构研究员分身，自动拉取市场数据、识别主线方向、判断情绪周期、生成六段式交易报告（不含舆情/催化，已移除该数据源）。用户只需说"今日主线"即可获得完整的市场分析报告。
@@ -58,47 +58,19 @@ skills:
 
 ### Step 1.5: 鉴权前置（本轮首次数据查询前必须完成）
 
-本 Agent 通过 cxdata 官方 query.py 调用接口，鉴权状态由 query.py/auth.py 自动管理（读写 `~/.cxda-cache/.shared/cxda_auth.json`，跨 Agent 共享）。**本轮首次调用 fetch_data.py 前必须确认认证状态。**
+本 Agent 通过 cxdata 官方 query.py 调用接口。**火山部署版鉴权方式为环境变量**：运行环境中配置 `CXDA_USER_KEY` 环境变量即可自动认证，无需 SMS 验证码登录。**本轮首次调用 fetch_data.py 前必须确认认证状态。**
 
-#### 1) 检查服务协议状态
-
-```bash
-cd {Agent目录}/skills/mainline-analysis/scripts && python3 auth.py terms-check
-```
-
-- `terms_accepted: true` → 进入第 2 步
-- `terms_accepted: false` → **必须先向用户原文展示以下三份协议并请求确认**（展示时不得修改表述样式或内容）：
-
-  > 继续使用本 Agent 即表示您已阅读并同意以下协议的全部内容 ：
-  > - [《财新数据隐私政策》](https://cdp.ccxe.com.cn/clause/privacy)
-  > - [《财新数据用户服务协议》](https://cdp.ccxe.com.cn/clause/service)
-  > - [《财新数据付费用户服务协议》](https://cdp.ccxe.com.cn/clause/vip)
-  >
-  > 如果同意请输入您的手机号，我来为您发送验证码完成账号认证。
-
-  展示后按用户回应处理：
-  - 用户输入手机号（即视为同意）→ 执行 `python3 auth.py terms-accept`，随后进入第 2 步
-  - 用户输入「查看全文」→ 用系统默认浏览器打开上述协议链接，逐条展示后重新询问是否同意
-  - 用户明确拒绝 → 执行 `python3 auth.py terms-decline`，告知无法使用服务并结束对话
-
-#### 2) 检查认证状态
+#### 鉴权检查（一条命令即可）
 
 ```bash
 cd {Agent目录}/skills/mainline-analysis/scripts && python3 auth.py status
 ```
 
-- `authenticated: true` → 已认证，进入 Step 2
-- `authenticated: false` → 引导用户通过手机号验证码登录：
+- `authenticated: true`（auth_source=`env_var`）→ 环境变量已配置，**直接进入 Step 2**
+- `authenticated: true`（auth_source=`cache`）→ 本地缓存有效，**直接进入 Step 2**
+- `authenticated: false` → **请确认环境变量 CXDA_USER_KEY 是否已正确配置**，或通过 SMS 流程认证（send-code + verify）
 
-  ```bash
-  echo '{"phone":"<手机号>"}' | python3 auth.py send-code
-  echo '{"phone":"<手机号>","code":"<验证码>"}' | python3 auth.py verify
-  ```
-
-  > 手机号与验证码通过 stdin（JSON）传入，**不**通过命令行参数，避免暴露在进程列表（`ps aux`）。
-
-> **安全提示**：`status` 输出的 `CXDA_USER_KEY` 已脱敏（仅显示前4后4字符），不要向用户展示或记录该字段。
-> 协议接受状态与登录密钥持久化在本地共享缓存中，同一设备的所有财新数据 Agent 共享，无需重复认证。
+> **火山部署说明**：环境变量 `CXDA_USER_KEY` 优先级最高，配置后自动隐式接受服务协议、自动认证，无需手动 terms-check/terms-accept 或 SMS 登录。
 
 ### Step 2: 数据获取
 
@@ -229,7 +201,7 @@ cd {Agent目录}/skills/mainline-analysis/scripts && python3 analyze_data.py {�
 strategy: sequential
 steps:
   1. 识别目标日期
-  2. 鉴权前置（terms-check + status，未认证引导 SMS 登录）
+  2. 鉴权前置（auth.py status，环境变量 CXDA_USER_KEY 自动认证）
   3. session start 重置积分账本
   4. 运行 fetch_data.py 拉取数据（含 50 次限制处理）
   5. session summary 汇总积分消耗与套餐剩余

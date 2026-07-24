@@ -37,51 +37,23 @@ metadata:
 
 ---
 
-## 首次使用：协议确认与登录认证
+## 鉴权说明
 
-> 若 `send-code`、`verify`、业务 `api`、`page-size`、`package` 或 `session summary`
-> 返回 `status: "terms_not_accepted"`，说明尚未完成服务协议确认。
-> 此时停止当前业务调用，按下方「服务协议状态」流程完成协议确认后再继续。
-> **认证前置**：本轮首次业务查询前必须检查协议状态和认证状态。协议未接受、用户未认证、认证失败、
-> 用户要求查看协议全文、或需要向用户展示协议/认证话术时，先阅读 `references/auth-flow.md`，
-> 并严格按其中的话术与原文执行。已认证且协议已接受时无需反复加载该文件。
+**火山部署版鉴权方式为环境变量**：运行环境中配置 `CXDA_USER_KEY` 环境变量即可自动认证，无需 SMS 验证码登录。
 
-**1. 检查服务协议状态：**
-
-```bash
-$PYTHON "$AUTH_SCRIPT" terms-check
-```
-- `terms_accepted: true` → 进入第 2 步
-- `terms_accepted: false` → **必须先向用户原文展示下列三份协议并请求确认**（展示时不得修改表述样式或内容，详见 `references/auth-flow.md`「服务协议确认」）：
-
-  > 继续使用本 Skill 即表示您已阅读并同意以下协议的全部内容 ：
-  > - [《财新数据隐私政策》](https://cdp.ccxe.com.cn/clause/privacy)
-  > - [《财新数据用户服务协议》](https://cdp.ccxe.com.cn/clause/service)
-  > - [《财新数据付费用户服务协议》](https://cdp.ccxe.com.cn/clause/vip)
-  >
-  > 如果同意请输入您的手机号，我来为您发送验证码完成账号认证。
-
-  展示后按用户回应处理：
-  - 用户输入手机号（即视为同意）→ 执行 `$PYTHON "$AUTH_SCRIPT" terms-accept`，随后进入第 2 步发送验证码
-  - 用户输入「查看全文」→ 用系统默认浏览器打开上述协议链接，逐条展示后重新询问是否同意
-  - 用户明确拒绝 → 执行 `$PYTHON "$AUTH_SCRIPT" terms-decline`，告知无法使用服务并结束对话
-
-**2. 检查认证状态：**
+**鉴权检查（一条命令即可）：**
 
 ```bash
 $PYTHON "$AUTH_SCRIPT" status
 ```
-- `authenticated: true` → 已认证，可直接查询数据
-- `authenticated: false` → 按 `references/auth-flow.md`「认证流程」章节，引导用户通过手机号验证码登录：
 
-```bash
-echo '{"phone":"<手机号>"}' | $PYTHON "$AUTH_SCRIPT" send-code
-echo '{"phone":"<手机号>","code":"<验证码>"}' | $PYTHON "$AUTH_SCRIPT" verify
-> 手机号与验证码通过 stdin（JSON）传入，不通过命令行参数，避免暴露在进程列表（`ps aux`）。
-```
+- `authenticated: true`（`auth_source`=`env_var`）→ 环境变量已配置，**直接进入业务查询**
+- `authenticated: true`（`auth_source`=`cache`）→ 本地缓存有效，**直接进入业务查询**
+- `authenticated: false` → **请确认环境变量 CXDA_USER_KEY 是否已正确配置**，或通过 SMS 流程认证（send-code + verify）
+
+> **火山部署说明**：环境变量 `CXDA_USER_KEY` 优先级最高，配置后自动隐式接受服务协议、自动认证，无需手动 terms-check/terms-accept 或 SMS 登录。
 
 > **安全提示**：`status` 输出的 `CXDA_USER_KEY` 已脱敏（仅显示前4后4字符），不要向用户展示或记录该字段。
-> 协议接受状态与登录密钥持久化在本地共享缓存中，同一设备的所有财新数据 Skill 共享，无需重复认证。完整说明见 `references/auth-flow.md`。
 
 ---
 
@@ -89,7 +61,7 @@ echo '{"phone":"<手机号>","code":"<验证码>"}' | $PYTHON "$AUTH_SCRIPT" ver
 
 当本 Skill 被触发后，按以下唯一主流程执行：
 
-1. **确认协议与认证状态**：本轮首次业务查询前执行 `terms-check` 和 `status`。未接受协议或未认证时，按「首次使用：协议确认与登录认证」完成前置流程；用户拒绝协议、认证失败且无法继续时停止，不调用业务接口。
+1. **确认认证状态**：本轮首次业务查询前执行 `status`。未认证时确认环境变量 `CXDA_USER_KEY` 是否已配置；认证失败且无法继续时停止，不调用业务接口。
 
 2. **选择最小必要接口**：在下方「接口清单」中选定目标 API_ID，并先阅读其接口文档（接口清单「接口文档」列，路径形如 `references/{API_ID}.md`）。优先选择能直接满足问题的最少接口，不要预先串行调用所有可能相关的接口。
 

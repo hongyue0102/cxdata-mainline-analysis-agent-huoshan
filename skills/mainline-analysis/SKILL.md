@@ -94,10 +94,11 @@ cd {Agent目录}/skills/mainline-analysis/scripts && python3 analyze_data.py {�
 | public-opinion-stock-index | 正面/负面舆情指数与标题 |
 | index-market-date | 三大指数日线行情 |
 
-配置文件位于各 skill 的 `scripts/.env`，需填写：
-- `CXDA_USER_KEY`：财新数据平台用户密钥（**只需配一份**，放在 `scripts/.env` 中）
-  - 复制 `scripts/.env.example` 为 `scripts/.env`，填入密钥
-  - 前往 [财新数据平台](https://yun.ccxe.com.cn/data/Skills) 注册并申请（**平台目前处于推广期，可免费试用**）
+配置说明：
+
+- `CXDA_USER_KEY`：财新数据平台用户密钥
+  - **火山部署版**：通过环境变量 `CXDA_USER_KEY` 配置，无需 SMS 登录或 `.env` 文件
+  - 其他部署：前往 [财新数据平台](https://yun.ccxe.com.cn/data/Skills) 注册申请（推广期可免费试用），可通过 `.env` 文件或环境变量配置
 - `BASE_URL`：API 基础地址（默认 `http://cxapi.ccxe.com.cn/cxda`）
 
 所有内置数据源 skill 共用此密钥，通过环境变量自动传递，无需分别配置。
@@ -106,7 +107,7 @@ cd {Agent目录}/skills/mainline-analysis/scripts && python3 analyze_data.py {�
 
 # 故障排除
 
-- **数据源未配置**: 检查 `scripts/.env` 中是否配置了 `CXDA_USER_KEY`。如无密钥，前往 [财新数据平台](https://yun.ccxe.com.cn/data/Skills) 申请（推广期可免费试用）
+- **数据源未配置**: 检查环境变量 `CXDA_USER_KEY` 是否已设置，或检查 `scripts/.env` 配置
 - **ModuleNotFoundError**: 需要安装依赖 → `pip install python-dotenv`
 - **数据获取失败**: 检查各 skill 的 `scripts/.env` 配置，确认网络连接正常
 

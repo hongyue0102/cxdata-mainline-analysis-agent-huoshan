@@ -4,6 +4,34 @@
 
 ---
 
+## 环境变量鉴权（火山部署版）
+
+> **火山部署版**：`CXDA_USER_KEY` 通过环境变量配置，无需 SMS 验证码登录。环境变量优先级最高，配置后自动隐式接受服务协议、自动认证。
+
+**鉴权检查（一条命令即可）：**
+
+```bash
+$PYTHON "$AUTH_SCRIPT" status
+```
+
+**返回结果：**
+- `authenticated: true`（`auth_source`=`env_var`）→ 环境变量已配置，**直接进入业务查询**
+- `authenticated: true`（`auth_source`=`cache`）→ 本地缓存有效，**直接进入业务查询**
+- `authenticated: false` → 请确认环境变量 `CXDA_USER_KEY` 是否已正确配置
+
+> 环境变量 `CXDA_USER_KEY` 优先级高于本地缓存，常见部署方式：
+> - 云平台环境变量配置面板（如火山引擎）
+> - 容器环境变量（Docker/K8s env）
+> - Shell 环境变量（`export CXDA_USER_KEY=xxx`）
+
+---
+
+## SMS 验证码登录（备用）
+
+> 以下流程适用于未配置环境变量的场景（如本地开发/其他客户部署）。火山部署版通常不需要此流程。
+
+---
+
 ## 服务协议确认
 
 > **法律合规要求**：在使用本 Skill 的任何功能前，必须确认用户已阅读并接受以下三份协议。
@@ -104,6 +132,8 @@ $PYTHON "$AUTH_SCRIPT" status
 echo '{"phone":"<手机号>"}' | $PYTHON "$AUTH_SCRIPT" send-code
 ```
 
+> 手机号通过 stdin（JSON）传入，不通过命令行参数，避免暴露在进程列表（`ps aux`）。
+
 **输出 JSON 字段：**
 - `code`：后端返回码，`10000` 表示成功，`10500` 表示失败
 - `msg`：后端返回消息；失败原因直接读取该字段
@@ -121,9 +151,10 @@ echo '{"phone":"<手机号>"}' | $PYTHON "$AUTH_SCRIPT" send-code
 ### 验证验证码
 
 ```bash
-echo '{"phone":"<手机号>","code":"<验证码>"}' | $PYTHON "$AUTH_SCRIPT" verify
-> 手机号与验证码通过 stdin（JSON）传入，不通过命令行参数，避免暴露在进程列表（`ps aux`）。
+echo '{"phone":"<完整手机号>","code":"<4-6位验证码>"}' | $PYTHON "$AUTH_SCRIPT" verify
 ```
+
+> 手机号与验证码通过 stdin（JSON）传入，不通过命令行参数，避免暴露在进程列表（`ps aux`）。
 
 **输出 JSON 字段：**
 - `code`：后端返回码，`10000` 表示成功，`10500` 表示失败
