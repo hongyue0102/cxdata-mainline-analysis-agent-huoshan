@@ -88,6 +88,20 @@ cxdata-mainline-analysis-agent/
 
 ## 变更历史
 
+### 2026-07-29 火山部署版二次精简——移除手机号鉴权、session积分计费残留、16:10数据时效约束、行内{}替换
+
+**核心变更：彻底移除手机号鉴权 + session积分计费残留 + 主线分析增强**
+- `auth.py`：移除 send-code/verify 手机号鉴权子命令及相关函数，补 CXDA_USER_KEY 环境变量短路（622行→~280行）
+- `query.py`：移除 session 积分计费逻辑（start/confirm/summary/reset、50次确认守卫、计费记录），保留 api/page-size/package（809行→~250行）
+- `analyze_data.py`：composite_score 权重调整（日涨幅 0.3→0.4，涨停集中度 0.3→0.2）
+- `analyze_data.py`：市场环境涨跌行业改用二级行业口径（industry_l2_quotes）
+- `fetch_data.py`：新增 16:10 数据时效性校验（今日数据4:10后更新，此前退出；--force 可跳过）
+- `AGENT.md`：删除 session 步骤，加 16:10 数据时效性约束说明
+- `SKILL.md(cxdata-stock-market-information)`：删除积分消耗提示整节、套餐额度查询整节、session/confirmation_required 引用
+- `SKILL.md(cxdata-stock-basic-information)`：删除 session 引用，精简鉴权说明
+- `auth-flow.md(两个references)`：删除 SMS 登录全段，仅保留环境变量鉴权
+- `SKILL.md(mainline-analysis)`：行内 {} → <>（代码块内不变，避免影响打镜像）
+
 ### 2026-07-29 数据源配置与实际调用对齐（删舆情引用 + 补行业分类引用）
 
 - **问题**：`SKILL.md` 数据源表声明引用了 `cxdata-public-opinion-stock-index`（舆情 skill），但 `fetch_data.py` 实际未调用其任何接口（舆情数据源已于 2026-06-23 移除）；反之，`fetch_data.py` 实际调用了 `cxdata-industry-classification-company` 的 `getPubInduCodeByCond-G`（申万三级→二级映射），但该 skill 未在数据源表体现，配置与实际调用不一致。同时该 skill 目录存在多余嵌套（双层），与规范结构不符。
