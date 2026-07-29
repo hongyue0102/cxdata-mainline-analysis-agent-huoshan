@@ -247,6 +247,10 @@ def is_broken(r):
 # ========== 主流程 ==========
 
 def main():
+    force = "--force" in sys.argv
+    if force:
+        sys.argv.remove("--force")
+
     if len(sys.argv) > 1:
         date = sys.argv[1]
     else:
@@ -256,6 +260,23 @@ def main():
         elif today.weekday() == 6:
             today -= timedelta(days=2)
         date = today.strftime("%Y-%m-%d")
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    if date == today_str:
+        now = datetime.now()
+        cutoff_hour, cutoff_minute = 16, 10
+        if now.hour < cutoff_hour or (now.hour == cutoff_hour and now.minute < cutoff_minute):
+            msg = (
+                f"[WARNING] 今日({date})数据尚未更新——财新数据接口每日 {cutoff_hour}:{cutoff_minute:02d} 后才更新当日完整数据。\n"
+                f"当前时间 {now.strftime('%H:%M')}，拉取到的可能是盘中不完整快照，分析结果不可靠。\n"
+                f"建议等到 {cutoff_hour}:{cutoff_minute:02d} 后再执行，或使用 --force 强制拉取（数据可能不完整）。"
+            )
+            if not force:
+                print(msg)
+                sys.exit(1)
+            else:
+                print(msg)
+                print("[--force] 继续拉取盘中快照，请注意数据可能不完整。")
 
     t_start = time.time()
 

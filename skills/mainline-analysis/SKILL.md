@@ -32,17 +32,17 @@ description: A股市场主线识别系统。自动拉取指数行情、行业涨
 运行数据获取脚本：
 
 ```bash
-cd {Agent目录}/skills/mainline-analysis/scripts && python3 fetch_data.py {日期}
+cd <Agent目录>/skills/mainline-analysis/scripts && python3 fetch_data.py <日期>
 ```
 
-> `{Agent目录}` 为本 Agent 解压后的根目录路径。
+> `<Agent目录>` 为本 Agent 解压后的根目录路径。
 
 日期格式 YYYY-MM-DD，不传则默认最近一个交易日。脚本会自动拉取全部所需数据到 `scripts/data/` 目录（约 2 分钟）。
 
 ## Step 2: 数据分析
 
 ```bash
-cd {Agent目录}/skills/mainline-analysis/scripts && python3 analyze_data.py {日期}
+cd <Agent目录>/skills/mainline-analysis/scripts && python3 analyze_data.py <日期>
 ```
 
 生成结构化分析结果 `scripts/data/analysis.json`。
@@ -94,22 +94,18 @@ cd {Agent目录}/skills/mainline-analysis/scripts && python3 analyze_data.py {�
 | industry-classification-company | 行业代码表（申万三级→二级映射） |
 | index-market-date | 三大指数日线行情 |
 
-配置说明：
+**火山部署版**：仅需配置环境变量 `CXDA_USER_KEY`（财新数据平台用户密钥），脚本自动认证，无需 SMS 登录或 `.env` 文件。所有内置数据源 skill 共用此密钥，通过环境变量自动传递。
 
-- `CXDA_USER_KEY`：财新数据平台用户密钥
-  - **火山部署版**：通过环境变量 `CXDA_USER_KEY` 配置，无需 SMS 登录或 `.env` 文件
-  - 其他部署：前往 [财新数据平台](https://yun.ccxe.com.cn/data/Skills) 注册申请（推广期可免费试用），可通过 `.env` 文件或环境变量配置
-- `BASE_URL`：API 基础地址（默认 `http://cxapi.ccxe.com.cn/cxda`）
-
-所有内置数据源 skill 共用此密钥，通过环境变量自动传递，无需分别配置。
+- `CXDA_USER_KEY`：16-128 位字母数字下划线连字符，通过环境变量传入
+- `BASE_URL`：API 基础地址（默认 `https://cxapi.ccxe.com.cn/cxda`）
 
 ---
 
 # 故障排除
 
-- **数据源未配置**: 检查环境变量 `CXDA_USER_KEY` 是否已设置，或检查 `scripts/.env` 配置
-- **ModuleNotFoundError**: 需要安装依赖 → `pip install python-dotenv`
-- **数据获取失败**: 检查各 skill 的 `scripts/.env` 配置，确认网络连接正常
+- **数据源未配置**: 检查环境变量 `CXDA_USER_KEY` 是否已设置
+- **ModuleNotFoundError**: 需要安装依赖 → `pip install python-dotenv cryptography`
+- **数据获取失败**: 确认网络连接正常，检查 CXDA_USER_KEY 是否有效
 
 ---
 

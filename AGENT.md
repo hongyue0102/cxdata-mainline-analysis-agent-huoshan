@@ -56,67 +56,23 @@ skills:
 
 从用户输入中提取目标日期（格式 YYYY-MM-DD）。如果用户未指定日期，默认使用最近一个交易日。
 
-### Step 1.5: 鉴权前置（本轮首次数据查询前必须完成）
-
-本 Agent 通过 cxdata 官方 query.py 调用接口。**火山部署版鉴权方式为环境变量**：运行环境中配置 `CXDA_USER_KEY` 环境变量即可自动认证，无需 SMS 验证码登录。**本轮首次调用 fetch_data.py 前必须确认认证状态。**
-
-#### 鉴权检查（一条命令即可）
-
-```bash
-cd {Agent目录}/skills/mainline-analysis/scripts && python3 auth.py status
-```
-
-- `authenticated: true`（auth_source=`env_var`）→ 环境变量已配置，**直接进入 Step 2**
-- `authenticated: true`（auth_source=`cache`）→ 本地缓存有效，**直接进入 Step 2**
-- `authenticated: false` → **请确认环境变量 CXDA_USER_KEY 是否已正确配置**，或通过 SMS 流程认证（send-code + verify）
-
-> **火山部署说明**：环境变量 `CXDA_USER_KEY` 优先级最高，配置后自动隐式接受服务协议、自动认证，无需手动 terms-check/terms-accept 或 SMS 登录。
-
 ### Step 2: 数据获取
 
-**会话开始**（本轮首次调用 fetch_data.py 前，重置积分账本）：
+**⚠️ 数据时效性约束**：财新数据接口每日 **16:10** 后才更新当日完整数据。16:10 前拉取的是盘中不完整快照，主线识别结果不可靠。**禁止在 16:10 前执行今日主线分析**；如需分析历史日期（非今天），不受此限制。
+
+火山部署版通过环境变量 `CXDA_USER_KEY` 自动认证，无需 SMS 登录或额外的鉴权命令。直接运行取数脚本：
 
 ```bash
-cd {Agent目录}/skills/mainline-analysis/scripts && python3 query.py session start
+cd <Agent目录>/skills/mainline-analysis/scripts && python3 fetch_data.py <日期>
 ```
 
-执行主取数脚本：
-
-```bash
-cd {Agent目录}/skills/mainline-analysis/scripts && python3 fetch_data.py {日期}
-```
-
-> `{Agent目录}` 为本 Agent 解压后的根目录路径。
-> fetch_data.py 通过 subprocess 调用 query.py 完成实际取数（含认证、token 缓存、gzip 解码、积分计数、50 次硬限制）。
-
-#### 50 次调用硬限制处理（自动放行，无需人工确认）
-
-fetch_data.py 在批量取数过程中若单次调用触发 `confirmation_required`（本轮会话已成功调用 50 次计费接口），**会自动调用 `query.py session confirm` 解除阻断并重试一次**，无需暂停询问用户。日志中表现为：
-
-```
-[AUTO-CONFIRM] {api_id}: 触发 50 次限制，自动 confirm 后重试
-```
-
-这是批量取数场景的有意设计（主线取数单轮接口调用较多，频繁打断影响体验）。积分消耗以 Step 2.5 的 `session summary` 汇总为准。
-
-### Step 2.5: 会话积分汇总（数据获取完成后必须执行）
-
-```bash
-cd {Agent目录}/skills/mainline-analysis/scripts && python3 query.py session summary
-```
-
-读取 `call_count`（本次会话调用接口数量）与 `total_consumed`（累计消耗积分），告知用户：
-
-> 本次会话共调用 {call_count} 次接口，累计消耗 {total_consumed} 积分。
-
-同时读取 `packages` 逐套餐播报剩余额度：
-- 不同套餐的剩余积分不能混合合计，不要输出总剩余额度
-- 如果 `package_error` 非空，只汇总调用次数和累计消耗，并提示套餐清单获取失败
+> `<Agent目录>` 为本 Agent 解压后的根目录路径。
+> 日期格式 YYYY-MM-DD，不传则默认最近一个交易日。脚本通过 subprocess 调用 query.py 完成实际取数（含认证、token 缓存、gzip 解码），约 1-2 分钟。
 
 ### Step 3: 数据分析
 
 ```bash
-cd {Agent目录}/skills/mainline-analysis/scripts && python3 analyze_data.py {日期}
+cd <Agent目录>/skills/mainline-analysis/scripts && python3 analyze_data.py <日期>
 ```
 
 生成结构化分析结果 `scripts/data/analysis.json`。
@@ -182,7 +138,7 @@ cd {Agent目录}/skills/mainline-analysis/scripts && python3 analyze_data.py {�
 
 将分析数据和你的解读整合为完整的 Markdown 报告。
 
-报告保存位置：`{Agent目录}/A股主线识别(auto)-{日期}.md`
+报告保存位置：`<Agent目录>/A股主线识别(auto)-<日期>.md`
 
 #### 报告必须包含的结构
 
@@ -201,10 +157,7 @@ cd {Agent目录}/skills/mainline-analysis/scripts && python3 analyze_data.py {�
 strategy: sequential
 steps:
   1. 识别目标日期
-  2. 鉴权前置（auth.py status，环境变量 CXDA_USER_KEY 自动认证）
-  3. session start 重置积分账本
-  4. 运行 fetch_data.py 拉取数据（含 50 次限制处理）
-  5. session summary 汇总积分消耗与套餐剩余
-  6. 运行 analyze_data.py 生成分析结果
-  7. Agent LLM 读取 analysis.json 亲自生成六段式报告
-  8. 保存报告并给用户总结
+  2. 运行 fetch_data.py 拉取数据（环境变量 CXDA_USER_KEY 自动认证）
+  3. 运行 analyze_data.py 生成分析结果
+  4. Agent LLM 读取 analysis.json 亲自生成六段式报告
+  5. 保存报告并给用户总结

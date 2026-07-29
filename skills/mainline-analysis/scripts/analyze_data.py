@@ -188,7 +188,7 @@ def analyze_main_lines(industry_l2_quotes, limit_up_full, abnormal_trade, stock_
         month_change = safe_float(ind.get("INDU_LIMIT_1M"))
         week_score = round(max(0, week_change) / max_week * 100, 1) if max_week > 0 else 0
         month_score = round(max(0, month_change) / max_month * 100, 1) if max_month > 0 else 0
-        composite = round(day_rank_score * 0.3 + limit_score * 0.3 + week_score * 0.2 + month_score * 0.2, 1)
+        composite = round(day_rank_score * 0.4 + limit_score * 0.2 + week_score * 0.2 + month_score * 0.2, 1)
 
         if limit_count >= 3:
             line_type = "资金攻击型"
@@ -629,7 +629,7 @@ def main():
 
     # 六步分析
     print("[1/6] 市场环境...")
-    env = analyze_market_environment(heat, industry_quotes, meta)
+    env = analyze_market_environment(heat, industry_l2_quotes or industry_quotes, meta)
 
     print("[2/6] 主线识别...")
     lines = analyze_main_lines(industry_l2_quotes or industry_quotes, limit_up_full, abnormal_trade, stock_detail)
