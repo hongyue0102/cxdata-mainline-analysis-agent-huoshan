@@ -4,7 +4,7 @@
 
 ## 功能
 
-- 自动拉取三大指数行情、行业涨跌、个股行情、舆情等数据（通过财新数据平台）
+- 自动拉取三大指数行情、行业涨跌、个股行情等数据（通过财新数据平台）
 - 基于涨停集中度 + 行业涨幅 + 周月趋势的四维综合评分识别主线
 - 判断情绪周期（冰点/调整/修复/主升/高潮）
 - 识别核心锚点个股（情绪标的/趋势中军/补涨标的）
@@ -82,11 +82,21 @@ cxdata-mainline-analysis-agent/
 │   │       └── data/                              # 中间数据（自动生成，.gitignore 排除）
 │   ├── cxdata-stock-market-information/           # 内置数据源（空壳：SKILL.md + references）
 │   ├── cxdata-stock-basic-information/            # 内置数据源（空壳）
-│   └── cxdata-public-opinion-stock-index/         # 内置数据源（空壳）
+│   └── cxdata-industry-classification-company/   # 内置数据源（空壳：行业代码表）
 └── README.md
 ```
 
 ## 变更历史
+
+### 2026-07-29 数据源配置与实际调用对齐（删舆情引用 + 补行业分类引用）
+
+- **问题**：`SKILL.md` 数据源表声明引用了 `cxdata-public-opinion-stock-index`（舆情 skill），但 `fetch_data.py` 实际未调用其任何接口（舆情数据源已于 2026-06-23 移除）；反之，`fetch_data.py` 实际调用了 `cxdata-industry-classification-company` 的 `getPubInduCodeByCond-G`（申万三级→二级映射），但该 skill 未在数据源表体现，配置与实际调用不一致。同时该 skill 目录存在多余嵌套（双层），与规范结构不符。
+- **方案**：
+  - 删除 `skills/cxdata-public-opinion-stock-index/` skill 目录及其 references
+  - 新增 `skills/cxdata-industry-classification-company/` skill（SKILL.md + references/getPubInduCodeByCond-G.md），拍平为单层结构
+  - `SKILL.md` 数据源表：移除 public-opinion 行，新增 industry-classification-company 行；description 去掉"舆情"；第4条规则改为"报告不得包含催化/舆情段落"
+  - `rules.md` 第4条同步；`README.md` 目录树与描述文字同步去除残留"舆情"
+- **效果**：数据源配置清单与 `fetch_data.py` 实际调用 100% 一致，消除配置歧义；行业分类 skill 显式纳入依赖清单，便于维护与审计
 
 ### 2026-07-24 火山部署版：移除积分/session会话账本逻辑，统一CXDA_USER_KEY环境变量鉴权
 

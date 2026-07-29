@@ -1,6 +1,6 @@
 ---
 name: mainline-analysis
-description: A股市场主线识别系统。自动拉取指数行情、行业涨跌、个股行情、舆情等数据，经结构化分析后生成六段式主线识别报告。仅处理"A股市场整体主线结构"分析（板块/主线/情绪周期），不处理个股分析、单一板块分析、其他市场。触发词：今日主线、市场主线、主线识别、主线分析、每日主线、A股主线。
+description: A股市场主线识别系统。自动拉取指数行情、行业涨跌、个股行情等数据，经结构化分析后生成六段式主线识别报告。仅处理"A股市场整体主线结构"分析（板块/主线/情绪周期），不处理个股分析、单一板块分析、其他市场。触发词：今日主线、市场主线、主线识别、主线分析、每日主线、A股主线。
 ---
 
 # 🎯 适用边界（路由判断必读）
@@ -56,7 +56,7 @@ cd {Agent目录}/skills/mainline-analysis/scripts && python3 analyze_data.py {�
 1. **禁止篡改 Python 计算的数值**：`composite_score`、涨幅数据、涨停股数量、`line_type`、市场状态、情绪阶段、锚点个股列表等必须 100% 原样使用
 2. **禁止自行选取或增减锚点个股**：必须直接使用 `anchors` 列表，不得添加、删除或替换
 3. **禁止自行判断主线排序**：核心主线 = `main_lines[0]`，第二主线 = `main_lines[1]`，严格按 `composite_score` 降序
-4. **禁止推测催化因素**：只能从 `pos_titles` 提取，无舆情时标注"数据中无明确催化"
+4. **报告不得包含催化/舆情段落**：舆情数据源已移除，不得自行推测编造催化原因
 5. **禁止编造个股名称或数据**：每只股票必须存在于 `limit_up_details` 或 `anchors` 中
 6. **禁止展示情绪评分计算过程**：只输出 `emotion.phase` + 一句话定性
 7. **禁止自创关键判断/观察点/总结句**：以下 Python 结构化字段必须严格引用，不得修改/编造/遗漏：
@@ -91,7 +91,7 @@ cd {Agent目录}/skills/mainline-analysis/scripts && python3 analyze_data.py {�
 |-------|------|
 | stock-market-information | 行情、行业涨跌、情绪温度、异动、市值 |
 | stock-basic-information | 个股申万行业分类 |
-| public-opinion-stock-index | 正面/负面舆情指数与标题 |
+| industry-classification-company | 行业代码表（申万三级→二级映射） |
 | index-market-date | 三大指数日线行情 |
 
 配置说明：
