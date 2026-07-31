@@ -198,24 +198,31 @@ def _derive_key() -> bytes:
       → 水平越权），JSON 转义 `"` 和 `\` 使不同输入必然对应不同序列化结果。
     - user 走 _get_effective_username（不受环境变量污染），杜绝伪造。
     - pepper 32 字节 secure random，落盘 0o600（缓解仅依赖公开系统属性的水平越权）。
-    严格要求三项特征均非空，任一缺失都拒绝派生，防止 material 退化为可预测低熵输入。
+
+    降级策略：machine-id 缺失时（容器环境常见）不报错，改为降级派生
+    （仅用 hostname + user + pepper），仍满足基本安全要求。
+    hostname 和 user 均缺失时才拒绝派生。
     """
     user = _get_effective_username()
     host = socket.gethostname() or ""
     machine_id = _get_machine_id()
-    if not host or not user or not machine_id:
+    if not host and not user:
         raise RuntimeError(
-            "无法获取足够的机器特征（hostname/username/machine-id 至少一项为空），"
-            "拒绝生成低熵密钥。请检查系统主机名、登录用户以及 machine-id 配置。"
+            "无法获取足够的机器特征（hostname 和 username 均为空），"
+            "拒绝生成低熵密钥。请检查系统主机名和登录用户配置。"
+        )
+    if not machine_id:
+        import logging
+        logging.getLogger("cxda.cred_crypto").warning(
+            "machine-id 缺失（容器环境常见），降级为 hostname+user+pepper 派生密钥"
         )
     pepper = _get_or_create_pepper()
     identity = json.dumps(
-        {"host": host, "user": user, "machine_id": machine_id},
+        {"host": host, "machine_id": machine_id, "user": user},
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    # pepper 独立成段附加，避免 identity 中出现 pepper 字节的边界歧义
     material = identity + b"\x00pepper=" + pepper
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
