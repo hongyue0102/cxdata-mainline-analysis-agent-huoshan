@@ -88,12 +88,12 @@ cxdata-mainline-analysis-agent/
 
 ## 变更历史
 
-### 2026-07-29 修复火山容器环境鉴权崩溃（cred_crypto machine-id 降级）
+### 2026-07-31 修复火山容器环境鉴权崩溃（cred_crypto machine-id 降级）
 
 **问题**：火山 AgentKit runtime 是容器实例，环境里没有 `/etc/machine-id`，导致 `cred_crypto._derive_key()` 抛 RuntimeError 拒绝派生密钥，整条鉴权链断掉。
 **修复**：`cred_crypto.py` 的 `_derive_key()` 改为降级策略——machine-id 缺失时不再 raise，改为 hostname+user+pepper 继续派生（打印 warning），仅 hostname 和 user 都缺失时才拒绝。容器重启后 pepper 丢失导致旧缓存解不开，但 `get_user_key()` 优先读环境变量 `CXDA_USER_KEY`，不影响主流程。
 
-### 2026-07-29 火山部署版二次精简——移除手机号鉴权、session积分计费残留、16:10数据时效约束、行内{}替换
+### 2026-07-31 火山部署版二次精简——移除手机号鉴权、session积分计费残留、16:10数据时效约束、行内{}替换
 
 **核心变更：彻底移除手机号鉴权 + session积分计费残留 + 主线分析增强**
 - `auth.py`：移除 send-code/verify 手机号鉴权子命令及相关函数，补 CXDA_USER_KEY 环境变量短路（622行→~280行）
