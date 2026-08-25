@@ -585,6 +585,15 @@ def analyze_summary_and_observations(env, lines, emotion, anchors, index_quotes)
 
 def main():
     date = sys.argv[1] if len(sys.argv) > 1 else "latest"
+    # 输入校验：仅接受 "latest" 或合法 YYYY-MM-DD 格式，拒绝畸形输入
+    # （date 仅用于展示与元数据，不参与路径拼接，此处为一致性防御加固）。
+    if date != "latest":
+        from datetime import datetime as _dt
+        try:
+            date = _dt.strptime(date, "%Y-%m-%d").strftime("%Y-%m-%d")
+        except (ValueError, TypeError):
+            print(f"[ERROR] 非法日期参数: {date!r}（要求 'latest' 或 YYYY-MM-DD，如 2026-04-20）")
+            sys.exit(1)
 
     print(f"=== A股主线识别数据分析 ===")
 

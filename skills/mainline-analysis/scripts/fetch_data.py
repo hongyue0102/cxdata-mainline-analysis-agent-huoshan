@@ -253,6 +253,13 @@ def main():
 
     if len(sys.argv) > 1:
         date = sys.argv[1]
+        # 输入校验：日期必须为合法 YYYY-MM-DD 格式，拒绝非法/畸形输入进入后续
+        # subprocess 参数与后端 API 请求（防御性加固，避免非法输入透传到下游）。
+        try:
+            date = datetime.strptime(date, "%Y-%m-%d").strftime("%Y-%m-%d")
+        except (ValueError, TypeError):
+            print(f"[ERROR] 非法日期参数: {date!r}（要求格式 YYYY-MM-DD，如 2026-04-20）")
+            sys.exit(1)
     else:
         today = datetime.now()
         if today.weekday() == 5:

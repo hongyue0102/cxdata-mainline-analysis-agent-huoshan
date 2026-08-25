@@ -10,6 +10,11 @@ skills/*/scripts/.env
 skills/mainline-analysis/scripts/data/
 skills/mainline-analysis/scripts/data_backup_*/
 
+# 历史/备份脚本目录（严禁进交付包：旧版脚本含已修复的安全漏洞，会被安全扫描判定为同类风险）
+skills/*/scripts/_backup_*/
+skills/*/scripts/*_backup/
+**/_backup_pre_colleague_sync/
+
 # 生成的报告（所有历史/自动生成的报告样本，不进交付包，保持包体整洁）
 A股主线识别*.md
 A股市场主线识别报告*.md

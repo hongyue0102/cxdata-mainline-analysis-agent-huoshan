@@ -88,6 +88,13 @@ cxdata-mainline-analysis-agent/
 
 ## 变更历史
 
+### 2026-08-25 CLI 入参校验加固 + .gitignore 排除备份脚本目录
+
+**核心变更：CLI 入参防御 + 交付包整洁性**
+- `.gitignore`：新增 `_backup_*/`、`*_backup/`、`**/_backup_pre_colleague_sync/` 排除规则，禁止旧版含已修复漏洞的备份脚本进入交付包（避免被安全扫描判定为同类风险）
+- `analyze_data.py`：`main()` 入口新增 `date` 参数格式校验，仅接受 `latest` 或合法 `YYYY-MM-DD`，非法输入 `sys.exit(1)`（一致性防御加固，避免畸形输入透传到元数据）
+- `fetch_data.py`：`main()` 入口新增 `date` 参数 `YYYY-MM-DD` 强制校验，防止畸形输入透传到 subprocess 参数与后端 API 请求（防御性加固）
+
 ### 2026-07-31 修复火山容器环境鉴权崩溃（cred_crypto machine-id 降级）
 
 **问题**：火山 AgentKit runtime 是容器实例，环境里没有 `/etc/machine-id`，导致 `cred_crypto._derive_key()` 抛 RuntimeError 拒绝派生密钥，整条鉴权链断掉。
