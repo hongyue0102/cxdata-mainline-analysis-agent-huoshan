@@ -88,6 +88,19 @@ cxdata-mainline-analysis-agent/
 
 ## 变更历史
 
+### 2026-08-30 动态分页提速 + 同步最新skill火山适配
+
+**动态分页提速（核心优化）**：
+- **query.py**：`_fetch_api_limit_setting(api_id, params)` 传业务参数给 `api_getApiLimitSetting.htm`，服务端返回当前查询条件下的最优 maxPageSize（500 vs 不传参数时的固定 20）
+- 新增 `_page_size_cache_key(api_id, params)` 按业务参数组合缓存 + `_PAGE_SIZE_LOCK`（threading.RLock）线程锁防并发重复查询
+- **fetch_data.py**：`_get_max_page_size` / `fetch_all_pages` / `fetch_industry_by_level` 调用时传业务参数
+- 效果：maxPageSize 20→500，全市场个股分页 282→12 页，拉取耗时 204秒→66秒（-68%），数据完全一致
+
+**同步最新skill + 火山适配**：
+- cxdata-stock-market-information / cxdata-stock-basic-information / cxdata-industry-classification-company 三个 skill 同步武汉同事最新版（SKILL.md + references 接口文档）
+- 鉴权方式改为环境变量 `CXDA_USER_KEY`，删除手机验证码鉴权流程、删除积分计费内容（`_cxda_policy` / `show_billing_info` / `--finalize` / `session confirm` / `package` 套餐查询等）
+- 删除 `references/auth-flow.md`，新增批量接口文档 `getStkBasicInfoByCond-P.md`
+
 ### 2026-08-25 CLI 入参校验加固 + .gitignore 排除备份脚本目录
 
 **核心变更：CLI 入参防御 + 交付包整洁性**
@@ -446,19 +459,6 @@ cxdata-mainline-analysis-agent/
 
 - 广度维度（40%）：涨停数/跌停数/上涨占比分别打分再加权（不再要求三条件同时满足）
 - 强度维度（35%）：综合封板数量+炸板率（不再纯看炸板率）
-
-### 2026-08-30 动态分页提速 + 同步最新skill火山适配
-
-**动态分页提速（核心优化）**：
-- **query.py**：`_fetch_api_limit_setting(api_id, params)` 传业务参数给 `api_getApiLimitSetting.htm`，服务端返回当前查询条件下的最优 maxPageSize（500 vs 不传参数时的固定 20）
-- 新增 `_page_size_cache_key(api_id, params)` 按业务参数组合缓存 + `_PAGE_SIZE_LOCK`（threading.RLock）线程锁防并发重复查询
-- **fetch_data.py**：`_get_max_page_size` / `fetch_all_pages` / `fetch_industry_by_level` 调用时传业务参数
-- 效果：maxPageSize 20→500，全市场个股分页 282→12 页，拉取耗时 204秒→66秒（-68%），数据完全一致
-
-**同步最新skill + 火山适配**：
-- cxdata-stock-market-information / cxdata-stock-basic-information / cxdata-industry-classification-company 三个 skill 同步武汉同事最新版（SKILL.md + references 接口文档）
-- 鉴权方式改为环境变量 `CXDA_USER_KEY`，删除手机验证码鉴权流程、删除积分计费内容（`_cxda_policy` / `show_billing_info` / `--finalize` / `session confirm` / `package` 套餐查询等）
-- 删除 `references/auth-flow.md`，新增批量接口文档 `getStkBasicInfoByCond-P.md`
 
 ## 免责声明
 
