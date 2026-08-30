@@ -2,15 +2,17 @@
 name: cxdata-stock-basic-information
 description: 存储中国大陆证券交易所股票及上市公司基本信息，主要信息包括：一、中国大陆证券交易所（涵盖沪深主板、科创板、创业板、北交所、新三板、两网及退市公司）股票的基本信息，包括股票代码、交易简称、股票类型、证券市场、上市状态、上市板块、上市日期、退市日期、ISIN_CODE及变更前或转板前代码。二、股票交易简称的历次变动情况，变动原因涵盖新股发行、公司名称或经营范围变更、添加或撤销ST、添加或撤销ST、撤销ST变ST等，主要信息包括股票代码、变动后简称、信息公布日期、变动日期、变动原因。三、股票发行、上市、退市过程中上市状态的历次变动，状态类型包括拟上市、发行失败、暂缓上市、上市、终止上市、退市整理等，主要信息包括股票代码、股票简称、变动日期、状态变动类型、证券市场。四、上市公司的工商及行业信息，包括股票代码、股票简称、企业名称、统一社会信用代码、法定代表人、负责人、注册资本、成立日期、核准日期、注册地址、经营范围、登记状态、公司实控人性质（如央企、地方国企、其他）、证监会行业名称、申万行业名称、全球行业名称。五、境外上市（赴港、赴美）的中国大陆公司与境内主体的关系信息，包括证券代码、证券简称、证券市场、公司名称、上市日期、退市日期、所属国内公司名称。
 metadata:
-  version: "1.0.5"
+  version: "1.0.14"
   author: "财新数据"
-  website: "guzhi.io"
+  website: "https://yun.ccxe.com.cn"
   tags: ["stock-information", "company-information", "listing-status", "stock"]
+compatibility: "Requires Python >= 3.8"
 ---
 
 # cxdata-stock-basic-information
 
 > 财新数据官方 Skill，提供接口数据查询与数据整合能力。
+
 
 ## 使用场景
 
@@ -23,17 +25,76 @@ metadata:
 
 ---
 
-## 调用方式
+## 环境准备
 
-本 Skill 为内置数据源，接口由 `mainline-analysis/scripts/query.py` 统一调用。火山部署版通过环境变量 `CXDA_USER_KEY` 自动认证，无需 SMS 登录、session 会话或额外的鉴权命令。
+本 Skill 的命令位于与本文件同级的 `scripts/` 目录。火山部署版通过环境变量 `CXDA_USER_KEY` 自动认证，无需 SMS 验证码。
+按下文命令执行即可完成认证检查、查询、分页与响应解析。
 
-调用示例（由 mainline-analysis 的 fetch_data.py 自动完成，无需手动执行）：
-
-```bash
-python3 query.py api <API_ID> key=value [key=value ...]
-```
+- **依赖安装**：脚本依赖 `requests` 与 `cryptography`，首次使用前请安装：
+  - macOS / Linux：`python3 -m pip install -r requirements.txt`
+  - Windows PowerShell：`python -m pip install -r requirements.txt`
+  - （`requirements.txt` 与本文件同级；也可 `pip install requests cryptography`）
+- **调用方式**：用你所在平台的 Python（`python` 或 `python3`）直接执行脚本路径即可。
+  - macOS / Linux：`python3 ./scripts/query.py ...`
+  - Windows PowerShell：`python .\scripts\query.py ...`
+  - 路径含空格时加引号。
+- **记法约定**：下文命令中的 `$PYTHON`、`$AUTH_SCRIPT`、`$QUERY_SCRIPT` 仅为占位记法，
+  分别代表「你的 Python 解释器」「`scripts/auth.py`」「`scripts/query.py`」，请按你的平台等价替换。
 
 ---
+
+## 鉴权说明
+
+**火山部署版鉴权方式为环境变量**：运行环境中配置 `CXDA_USER_KEY` 环境变量即可自动认证，无需 SMS 验证码登录。
+
+**鉴权检查（一条命令即可）：**
+
+```bash
+$PYTHON "$AUTH_SCRIPT" status
+```
+
+- `authenticated: true`（`auth_source`=`env_var`）→ 环境变量已配置，**直接进入业务查询**
+- `authenticated: true`（`auth_source`=`cache`）→ 本地缓存有效，**直接进入业务查询**
+- `authenticated: false` → **请确认环境变量 CXDA_USER_KEY 是否已正确配置**
+
+> **火山部署说明**：环境变量 `CXDA_USER_KEY` 优先级最高，配置后自动隐式接受服务协议、自动认证。
+
+> **安全提示**：`status` 输出的 `CXDA_USER_KEY` 已脱敏（仅显示前4后4字符），不要向用户展示或记录该字段。
+
+---
+
+## 执行标准流程
+
+当本 Skill 被触发后，按以下唯一主流程执行：
+
+1. **确认认证状态**：本轮首次业务查询前执行 `$PYTHON "$AUTH_SCRIPT" status`。未认证时确认环境变量 `CXDA_USER_KEY` 是否已配置；认证失败且无法继续时停止，不调用业务接口。
+2. **选择最小必要接口**：在下方「接口清单」中选定目标 API_ID，并先阅读其接口文档（接口清单「接口文档」列，路径形如 `references/{API_ID}.md`）。优先选择能直接满足问题的最少接口，不要预先串行调用所有可能相关的接口。
+3. **校验入参与前置依赖**：严格按接口文档定义的入参字段组织参数；不得使用文档中不存在的接口或字段。缺少必填入参时，优先向用户询问；只有接口文档明确存在前置依赖、且当前查询目标需要补齐该字段时，才调用前置接口。
+4. **（按需）确认分页大小**：若结果可能超过默认条数，先查询该接口的 maxPageSize（见「分页获取」）。
+5. **调用统一查询工具**：
+
+```bash
+$PYTHON "$QUERY_SCRIPT" api <API_ID> key=value [key=value ...]
+```
+
+   `api` 参数采用 `key=value`。脚本自动完成 token、默认 `pageSize` 与响应解码。
+   本取数型 Skill 不定义跨接口调用图、上游字段映射、分页推进或断点恢复策略。需要多个业务接口的分析任务，应由分析型 Skill 统一编排并逐次调用各依赖 Skill 的 `query.py api`。
+
+6. **解析结果**：将输出的 JSON 数据解析后呈现给用户。
+7. **完成查询**：当已经获得足够数据并准备给用户最终答案时，视为本轮查询完成。
+8. **失败停止边界**：认证失败、权限不足、缺少关键入参、前置接口无结果、接口返回错误或输出为空时，不要盲目重复调用；先按「故障排除」说明原因，必要时向用户补充询问。
+
+---
+
+## 分页获取（按需）
+
+每个接口允许返回的最大条数（maxPageSize）不同。**当查询结果可能超过默认条数、需要获取大量数据或较长时间段的数据时，必须先查询该接口的最大 pageSize，再用 pageSize 参数指定返回条数，否则数据会被截断。**
+
+```bash
+$PYTHON "$QUERY_SCRIPT" page-size <API_ID>
+```
+
+返回示例：`<msg:请求成功, code:10000, maxPageSize:100>`，此时调用接口时可传 `pageSize=100`。
 
 ## 接口清单
 > ⚠️ **注意事项**：
@@ -50,19 +111,21 @@ python3 query.py api <API_ID> key=value [key=value ...]
 | 股票上市状态变动-通用 | ./references/getStkListStaChanByCond-G.md | getStkListStaChanByCond-G | 存储股票发行、上市、退市过程中上市状态的历次变动情况，范围涵盖拟上市（股票发行过程中、上市前）、发行失败（发行过程中，因特殊情况中止发行或撤销发行）、暂缓上市（发行完毕，因公司重要事项导致的暂缓上市）、上市、终止上市、退市整理等。主要信息包括：股票代码、股票简称、变动日期、上市状态变动类型、证券市场等。 |
 | 股票基本信息-通用 | ./references/getStkBasicInfoByCond-G.md | getStkBasicInfoByCond-G | 存储中国大陆证券交易所发行的股票基本信息，范围涵盖沪深主板、科创板、创业板、北交所、新三板、两网及退市公司股票。主要信息包括：股票代码、交易简称、股票类型、证券市场、上市状态、上市板块、上市日期、退市日期、ISIN_CODE以及变更前或转板前股票代码等。 |
 | 股票简称变动-通用 | ./references/getStkShortNameChanByCond-G.md | getStkShortNameChanByCond-G | 存储股票交易简称的历次变动情况，范围涵盖新股发行、公司名称或经营范围变更、添加ST、撤销ST、添加*ST、撤销*ST、撤销*ST变成ST等多个变动原因。主要信息包括：股票代码、股票简称（变动后简称）、信息公布日期、变动日期、变动原因等。 |
+| 股票基本信息-批量 | ./references/getStkBasicInfoByCond-P.md | getStkBasicInfoByCond-P | 存储中国大陆证券交易所发行的股票基本信息，范围涵盖沪深主板、科创板、创业板、北交所、新三板、两网及退市公司股票。主要信息包括：股票代码、交易简称、股票类型、证券市场、上市状态、上市板块、上市日期、退市日期、ISIN_CODE以及变更前或转板前股票代码等。 |
 
 ## 字段与调用约定
 
 - **相同含义字段说明**：ORG_UNI_CODE==COM_UNI_CODE；STK_UNI_CODE==BOND_UNI_CODE；如无明确说明股票代码不需要携带 SH、HK 等交易所代码。
 - **接口输入字段不明确**：接口输入参数是 ORG_UNI_CODE、STK_UNI_CODE 等参数时可以先通过对应的机构信息、股票信息基础接口调用尝试获取，获取不到时反馈并停止。
-- **多接口查询边界**：一次只调用当前问题所需的最小接口集合。除非接口文档明确要求，或当前接口缺少必填入参，否则不要为了“可能有用”而调用上游或同类接口。
+- **取数边界**：一次只调用当前问题所需的最小接口集合。除非接口文档明确要求，或当前接口缺少必填入参，否则不要为了“可能有用”而调用上游或同类接口；复杂跨接口流程由分析型 Skill 编排。
 
 ## 故障排除
 
-- **未认证 / 调用失败**：确认环境变量 `CXDA_USER_KEY` 是否已正确配置，并检查网络连接正常。
+- **参数命名：接口文档定义大写下划线（如 STK_CODE），实际调用必须用小驼峰（如 stkCode），否则报错─10091
+- **未认证 / 调用失败**：`status` 显示 `authenticated: false` 时，确认环境变量 `CXDA_USER_KEY` 是否已正确配置后重试。其他失败先检查返回消息与网络连接。
 - **输出为空**：确认输入参数是否正确，检查 API_ID 是否匹配查询类型。
 - **权限问题**：接口返回无权限或者权限到期时，提示用户前往 `https://yun.ccxe.com.cn/` 联系客服。
-- **套餐、积分问题**：返回套餐到期、积分不足、没有套餐、套餐渠道受限等情况时，提示用户前往`https://store.ccxe.com.cn/`财新数据商城购买套餐
 - **参数缺失 / 前置无结果**：缺少关键入参或前置接口查不到结果时，停止继续调用并向用户说明需要补充的信息。
 - **避免无效重试**：认证失败、权限不足、参数缺失、上游无结果或接口明确返回错误时，不要重复消耗接口调用；先处理原因或询问用户。
+- **命令路径问题**：文档中 `$AUTH_SCRIPT`、`$QUERY_SCRIPT` 等为「环境准备」中定义的变量，请确认已正确定位到 Skill 目录。
 - **接口错误码对照**：接口返回错误码时，错误描述示例参照：http://cxapi.ccxe.com.cn/cxda/mall/visitshop_preview.htm?downType=errorCode

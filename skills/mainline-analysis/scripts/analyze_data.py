@@ -15,7 +15,11 @@ from pathlib import Path
 DATA_DIR = Path(__file__).parent / "data"
 
 
-def load(name: str) -> list:
+def load(name: str, _date_dir=None) -> list:
+    """从日期归档目录读取数据，回退到扁平 data/ 目录（向后兼容）。"""
+    if _date_dir is not None:
+        with open(_date_dir / name, encoding="utf-8") as f:
+            return json.load(f)
     with open(DATA_DIR / name, encoding="utf-8") as f:
         return json.load(f)
 
@@ -597,30 +601,40 @@ def main():
 
     print(f"=== A股主线识别数据分析 ===")
 
+    # 日期归档目录：优先从 data/<date>/ 读取，回退到 data/（向后兼容）
+    _date_dir = DATA_DIR / date
+    if not _date_dir.exists():
+        _date_dir = None  # 回退到扁平 data/ 目录
+
+    if _date_dir:
+        print(f"  [CACHE] 从日期归档目录读取: data/{date}/")
+    else:
+        print(f"  [INFO] 从扁平目录读取: data/")
+
     # 加载数据
-    heat = load("market_heat.json")
-    index_quotes = load("index_quotes.json")
-    industry_quotes = load("industry_quotes.json")
+    heat = load("market_heat.json", _date_dir)
+    index_quotes = load("index_quotes.json", _date_dir)
+    industry_quotes = load("industry_quotes.json", _date_dir)
     try:
-        industry_l2_quotes = load("industry_l2_quotes.json")
+        industry_l2_quotes = load("industry_l2_quotes.json", _date_dir)
     except FileNotFoundError:
         industry_l2_quotes = []
-    stock_top_rise = load("stock_top_rise.json")
+    stock_top_rise = load("stock_top_rise.json", _date_dir)
     # 涨停股全集（封板成功的全部股票）。
     # 旧版只有 stock_top_rise（涨幅榜前100），会丢失非涨幅靠前的涨停股，
     # 导致主线/锚点/情绪分析用的涨停股不全（如 103 vs 61 不一致）。
     try:
-        limit_up_full = load("limit_up_full.json")
+        limit_up_full = load("limit_up_full.json", _date_dir)
     except FileNotFoundError:
         limit_up_full = None
     # 若全集缺失或数量明显少于 meta 记录，回退到涨幅榜（并记录告警）
     if not limit_up_full:
         print("  [WARN] limit_up_full.json 缺失，回退到 stock_top_rise（涨停股可能不全）")
         limit_up_full = [s for s in stock_top_rise if is_limit_up(s)]
-    abnormal_trade = load("abnormal_trade.json")
-    stock_value = load("stock_value.json")
-    stock_detail = load("stock_detail.json")
-    meta_data = load("meta.json")
+    abnormal_trade = load("abnormal_trade.json", _date_dir)
+    stock_value = load("stock_value.json", _date_dir)
+    stock_detail = load("stock_detail.json", _date_dir)
+    meta_data = load("meta.json", _date_dir)
     meta = meta_data[0] if meta_data else {}
 
     # === 数据一致性自检（防止旧版『涨停103 vs 封板61』不一致再次发生）===
@@ -738,7 +752,8 @@ def main():
         "key_judgments": summary_pkg["key_judgments"],
     }
 
-    output = DATA_DIR / "analysis.json"
+    output_dir = _date_dir if _date_dir else DATA_DIR
+    output = output_dir / "analysis.json"
     with open(output, "w", encoding="utf-8") as f:
         json.dump(analysis, f, ensure_ascii=False, indent=2)
 

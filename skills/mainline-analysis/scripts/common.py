@@ -250,15 +250,45 @@ def _cli_call(command: str, subcommand: str = None, args: list = None, raw_outpu
 
 # ── 认证数据读写 ──────────────────────────────────────────────────────
 
+# ── 进程内单例缓存（消除三层 subprocess 的固定开销） ────────────────
+_AUTH_CACHE_IN_PROCESS = None  # 认证数据进程内单例，避免每次调用都 spawn cxda_cache_cli.py
+_REQUESTS_SESSION = None       # requests.Session 单例，复用连接池 + keep-alive
+
+
+def _get_requests_session():
+    """获取进程内单例 requests.Session（连接池 + keep-alive，省去反复 TLS 握手）。"""
+    global _REQUESTS_SESSION
+    if _REQUESTS_SESSION is None:
+        import requests
+        _REQUESTS_SESSION = requests.Session()
+        _REQUESTS_SESSION.headers.update(HEADERS)
+        _REQUESTS_SESSION.proxies = PROXIES
+    return _REQUESTS_SESSION
+
+
 def get_cached_auth() -> dict:
-    """从缓存读取认证数据"""
+    """从缓存读取认证数据（进程内单例，避免每次调用都 spawn cxda_cache_cli.py）。"""
+    global _AUTH_CACHE_IN_PROCESS
+    if _AUTH_CACHE_IN_PROCESS is not None:
+        return _AUTH_CACHE_IN_PROCESS
     result = _cli_call("auth", "get")
     if result and isinstance(result, dict):
         if result.get("success") is not None:
-            return result.get("data", {})
+            _AUTH_CACHE_IN_PROCESS = result.get("data", {})
         elif "error" not in result:
-            return result
-    return {}
+            _AUTH_CACHE_IN_PROCESS = result
+        else:
+            _AUTH_CACHE_IN_PROCESS = {}
+    else:
+        _AUTH_CACHE_IN_PROCESS = {}
+    return _AUTH_CACHE_IN_PROCESS
+
+
+def refresh_cached_auth() -> dict:
+    """强制刷新进程内认证缓存（token 刷新后调用，确保下次读到最新值）。"""
+    global _AUTH_CACHE_IN_PROCESS
+    _AUTH_CACHE_IN_PROCESS = None
+    return get_cached_auth()
 
 
 def check_terms_accepted() -> Tuple[bool, dict]:
@@ -505,6 +535,7 @@ def cache_token(token: str):
         'authtoken_expire': (datetime.now() + timedelta(seconds=TOKEN_VALID_SECONDS)).strftime('%Y-%m-%d %H:%M:%S'),
     })
     save_auth(auth)
+    refresh_cached_auth()  # 刷新进程内单例，确保后续读到最新 token
 
 
 def fetch_new_token() -> str:
@@ -514,8 +545,6 @@ def fetch_new_token() -> str:
     浏览器/代理历史、Referer 头等（缓解未授权访问 & 凭证泄漏）。
     显式 verify=True 强制 TLS 校验，设置 timeout 防止悬挂。
     """
-    import requests
-
     user_key = get_user_key()
     if not user_key:
         return ""
@@ -524,11 +553,10 @@ def fetch_new_token() -> str:
         data = {"userKey": user_key}
         if REQUEST_CHANNEL:
             data["requestChannel"] = REQUEST_CHANNEL
-        resp = requests.post(
+        session = _get_requests_session()
+        resp = session.post(
             f"{BASE_URL}/webservice/foreign_getAuthtoken.htm",
             data=data,
-            headers=HEADERS,
-            proxies=PROXIES,
             timeout=30,
             verify=True,
             allow_redirects=False,
@@ -625,8 +653,6 @@ def http_get(url: str, params: dict = None, include_channel: bool = True) -> dic
     存在 open-redirect 时被 SSRF 到内网服务（若业务确需重定向，须在 hook 里
     调用 _validate_official_url 校验目标 URL 后再跟随）。
     """
-    import requests
-
     _validate_official_url(url)
 
     params = dict(params or {})
@@ -634,7 +660,7 @@ def http_get(url: str, params: dict = None, include_channel: bool = True) -> dic
         params["requestChannel"] = REQUEST_CHANNEL
 
     try:
-        resp = requests.get(url, params=params, headers=HEADERS, proxies=PROXIES, timeout=30, verify=True, allow_redirects=False)
+        resp = _get_requests_session().get(url, params=params, timeout=30, verify=True, allow_redirects=False)
     except Exception:
         raise RuntimeError("网络请求失败")
 
@@ -648,8 +674,6 @@ def http_post_form(url: str, data: dict = None, include_channel: bool = True) ->
     Referer、浏览器/代理历史。SSRF 校验、TLS 校验、超时策略与 http_get 一致。
     allow_redirects=False 同样拒绝跟随重定向（缓解 SSRF via open-redirect）。
     """
-    import requests
-
     _validate_official_url(url)
 
     data = dict(data or {})
@@ -657,7 +681,7 @@ def http_post_form(url: str, data: dict = None, include_channel: bool = True) ->
         data["requestChannel"] = REQUEST_CHANNEL
 
     try:
-        resp = requests.post(url, data=data, headers=HEADERS, proxies=PROXIES, timeout=30, verify=True, allow_redirects=False)
+        resp = _get_requests_session().post(url, data=data, timeout=30, verify=True, allow_redirects=False)
     except Exception:
         raise RuntimeError("网络请求失败")
 

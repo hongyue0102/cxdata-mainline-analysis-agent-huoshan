@@ -10,13 +10,12 @@ A股主线识别 - 数据获取脚本
 输出目录：data/
 
 鉴权说明：
-    本脚本通过 subprocess 调用同目录下的 query.py（cxdata 官方统一查询工具）。
-    认证状态由 query.py 自动管理（读取 ~/.cxda-cache/.shared/cxda_auth.json）。
-    若未认证，query.py 会返回错误，需先由 Agent 引导用户完成 auth.py 鉴权流程。
+    本脚本进程内直接调用 query.py 的取数函数（run_api_inline / get_page_size_inline），
+    认证状态由 common.py 自动管理（进程内单例缓存 + requests.Session 连接复用）。
+    若未认证，会返回错误，需先由 Agent 引导用户完成 auth.py 鉴权流程。
 """
 
 import json
-import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -24,7 +23,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-_QUERY_SCRIPT = SCRIPT_DIR / "query.py"
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from query import run_api_inline, get_page_size_inline
 
 # ========== 业务接口（硬编码，只允许以下接口） ==========
 
@@ -41,107 +43,100 @@ _ALLOWED_APIS = frozenset([
 ])
 
 
-def _run_query(api_id: str, params: dict) -> dict:
-    """单次 subprocess 调用 query.py api。返回解析后的 dict（含原始 status 字段）。"""
-    cmd = [sys.executable, str(_QUERY_SCRIPT), "api", api_id]
-    for k, v in params.items():
-        cmd.append(f"{k}={v}")
-
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=str(SCRIPT_DIR),
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"query.py 退出码 {result.returncode}, stderr: {result.stderr[:200]}")
-    stdout = result.stdout.strip()
-    if not stdout:
-        raise RuntimeError("query.py 无输出")
-    return json.loads(stdout)
-
-
 def call_api(api_id: str, params: dict) -> dict:
-    """通过 query.py 调用业务接口（仅允许 _ALLOWED_APIS 中的接口）。
+    """进程内调用业务接口（仅允许 _ALLOWED_APIS 中的接口）。
 
-    query.py 内部处理：认证、token 缓存、gzip+base64 解码。
+    直接调用 query.run_api_inline，不 spawn 子进程。
+    认证、token 缓存、gzip+base64 解码由 common.py/query.py 在进程内完成。
     返回的 dict 与原 HTTP 直连版本兼容：含 code/result/totalCount 等字段。
     """
     if api_id not in _ALLOWED_APIS:
         print(f"  [ERROR] 不允许的接口: {api_id}")
         return {"code": "error", "result": [], "totalCount": 0}
 
-    try:
-        data = _run_query(api_id, params)
+    data = run_api_inline(api_id, params)
 
-        # 认证失败不重试
-        if data.get("status") in ("failed", "terms_not_accepted"):
-            msg = data.get("error", "未知错误")
-            print(f"  [ERROR] {api_id}: {msg}")
-            return {"code": "error", "result": [], "totalCount": 0,
-                    "status": data.get("status")}
+    # 认证失败不重试
+    if data.get("status") in ("failed", "terms_not_accepted"):
+        msg = data.get("error", "未知错误")
+        print(f"  [ERROR] {api_id}: {msg}")
+        return {"code": "error", "result": [], "totalCount": 0,
+                "status": data.get("status")}
 
-        return data
-    except json.JSONDecodeError as e:
-        print(f"  [ERROR] {api_id}: 响应解析失败 {e}")
-        return {"code": "error", "result": [], "totalCount": 0}
-    except subprocess.TimeoutExpired:
-        print(f"  [ERROR] {api_id}: 调用超时（120s）")
-        return {"code": "error", "result": [], "totalCount": 0}
-    except Exception as e:
-        print(f"  [ERROR] {api_id}: {e}")
-        return {"code": "error", "result": [], "totalCount": 0}
+    return data
 
 
-def _get_max_page_size(api_id: str, default: int = 1000) -> int:
-    """通过 query.py page-size 查询接口单次最大返回条数。
+def _get_max_page_size(api_id: str, params: dict = None, default: int = 1000) -> int:
+    """进程内查询接口在当前业务条件下的最大返回条数。
 
-    每个接口的最大 pageSize 由服务端定义（如 getStkDayQuoByCond-G 是 1000），
-    写死会导致分页次数错误——pageSize 写大于实际值时，服务端按其实际上限返回，
-    但客户端按写死值算分页数，可能多调或少调。务必动态获取。
+    服务端的 maxPageSize 会随查询条件变化（传 tradeDate 时返回 500，不传时返回 20），
+    必须传入业务参数获取最优分页大小，否则拿到固定的小值导致分页过多。
     """
     try:
-        cmd = [sys.executable, str(_QUERY_SCRIPT), "page-size", api_id]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=str(SCRIPT_DIR))
-        if result.returncode == 0 and result.stdout.strip():
-            data = json.loads(result.stdout)
-            mps = data.get("maxPageSize")
-            if mps and int(mps) > 0:
-                return int(mps)
+        data = get_page_size_inline(api_id, params)
+        mps = data.get("maxPageSize")
+        if mps and int(mps) > 0:
+            return int(mps)
     except Exception as e:
         print(f"  [WARN] 获取 {api_id} 的 maxPageSize 失败，用默认 {default}: {e}")
     return default
 
 
 def fetch_all_pages(api_id: str, params: dict, show_progress: bool = False) -> list:
-    """自动分页拉取全部数据。pageSize 动态取接口最大返回条数，避免写死导致分页错误。"""
-    page_size = _get_max_page_size(api_id)
+    """自动分页拉取全部数据。pageSize 动态取接口最大返回条数，避免写死导致分页错误。
+
+    并发拉取：第一页先拿 totalCount 算出总页数，剩余页用 ThreadPoolExecutor(max_workers=15) 并发拉取。
+    """
+    page_size = _get_max_page_size(api_id, params)
+
+    # 第一页：拿 totalCount 算总页数
+    params_copy = {**params, "pageNum": "1", "pageSize": str(page_size)}
+    data = call_api(api_id, params_copy)
+    results = data.get("result", [])
+    if not results:
+        return []
+
+    total = data.get("totalCount")
+    if total is not None:
+        total = int(total)
+        total_pages = -(total // -page_size) if total > 0 else 1
+        print(f"    totalCount={total}, pageSize={page_size}, 分{total_pages}页拉取（并发15）")
+    else:
+        return results  # 无 totalCount，只能拉一页
+
+    if total_pages == 1:
+        if total is not None and len(results) != total:
+            print(f"  [WARN][一致性] {api_id}: 拉取 {len(results)} 条 ≠ totalCount {total} 条")
+        return results
+
+    # 剩余页并发拉取
+    page_results = {1: results}
+
+    def _fetch_page(p):
+        pc = {**params, "pageNum": str(p), "pageSize": str(page_size)}
+        d = call_api(api_id, pc)
+        return p, d.get("result", [])
+
+    with ThreadPoolExecutor(max_workers=15) as pool:
+        futures = [pool.submit(_fetch_page, p) for p in range(2, total_pages + 1)]
+        done_count = 1
+        for f in as_completed(futures):
+            p, r = f.result()
+            page_results[p] = r
+            done_count += 1
+            if show_progress and done_count % 10 == 0:
+                fetched = sum(len(page_results.get(k, [])) for k in range(1, done_count + 1))
+                print(f"    ... 已拉取 {min(fetched, total)}/{total}")
+
+    # 按页序合并
     all_results = []
-    page = 1
-    total = None
-    while True:
-        params_copy = {**params, "pageNum": str(page), "pageSize": str(page_size)}
-        data = call_api(api_id, params_copy)
-        results = data.get("result", [])
-        if not results:
-            break
-        all_results.extend(results)
-        if page == 1:
-            tc = data.get("totalCount")
-            if tc is not None:
-                total = int(tc)
-                total_pages = -(total // -page_size) if total > 0 else 1
-                print(f"    totalCount={total}, pageSize={page_size}, 分{total_pages}页拉取")
-        if show_progress and total and page % 2 == 0:
-            print(f"    ... 已拉取 {len(all_results)}/{total}")
-        if total is not None and len(all_results) >= total:
-            break
-        page += 1
-        time.sleep(0.1)
-    # 一致性自检：实际拉取条数必须等于 API 声明的 totalCount，
-    # 否则说明被服务端限流/截断（如 abnormal_trade 实际可能 >100 但只回 100），
-    # 静默截断会让下游『把前N条当全集』分析。差异即告警，不静默放过。
+    for p in sorted(page_results.keys()):
+        all_results.extend(page_results[p])
+
+    if show_progress:
+        print(f"    ... 已拉取 {len(all_results)}/{total}")
+
+    # 一致性自检
     if total is not None and len(all_results) != total:
         print(f"  [WARN][一致性] {api_id}: 拉取 {len(all_results)} 条 ≠ totalCount {total} 条，"
               f"可能被服务端限流/截断，下游分析可能不全")
@@ -291,10 +286,28 @@ def main():
     print(f"目标日期: {date}")
 
     output_dir = Path(__file__).parent / "data"
-    output_dir.mkdir(exist_ok=True)
+
+    # 按交易日归档缓存：历史交易日数据不变，命中则跳过拉取
+    date_cache_dir = output_dir / date
+    _EXPECTED_FILES = {
+        "index_quotes.json", "market_heat.json", "industry_quotes.json",
+        "industry_l2_quotes.json", "stock_top_rise.json", "stock_top_drop.json",
+        "limit_up_full.json", "limit_broken.json", "limit_down_full.json",
+        "abnormal_trade.json", "stock_value.json", "stock_detail.json",
+        "block_trade.json", "meta.json",
+    }
+
+    if date_cache_dir.exists():
+        existing = {f.name for f in date_cache_dir.iterdir() if f.is_file()}
+        if _EXPECTED_FILES.issubset(existing):
+            print(f"[CACHE] 日期 {date} 数据已存在且完整，跳过拉取")
+            print(f"[DONE] 耗时: 0.0s (缓存命中)")
+            return
+
+    date_cache_dir.mkdir(parents=True, exist_ok=True)
 
     def save(filename: str, data):
-        with open(output_dir / filename, "w", encoding="utf-8") as f:
+        with open(date_cache_dir / filename, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         print(f"  [OK] {filename} ({len(data)} 条)")
 
@@ -325,7 +338,7 @@ def main():
     print("[2/8] 申万一级行业涨跌幅（induLevel=1 批量拉取）...")
 
     def fetch_industry_by_level(level: str) -> list:
-        page_size = _get_max_page_size("getInduDayQuoByCond-G")
+        page_size = _get_max_page_size("getInduDayQuoByCond-G", {"induLevel": level})
         all_results = []
         page = 1
         while True:
@@ -412,7 +425,7 @@ def main():
         return val.get("result", [])
 
     stock_value = []
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with ThreadPoolExecutor(max_workers=15) as pool:
         futures = [pool.submit(query_stock_value, r) for r in all_limit_up]
         for f in as_completed(futures):
             stock_value.extend(f.result())
@@ -422,6 +435,9 @@ def main():
     # 6/8 涨停股行业分类（申万二级）
     # ========================================
     print("[6/8] 涨停股行业分类...")
+
+    # 行业名→(二级名, 二级代码) 记忆化，避免对同一行业名重复查 getPubInduCodeByCond-G
+    _indu_code_cache = {}
 
     def query_stock_detail(r):
         code = r.get("STK_CODE", "")
@@ -441,17 +457,21 @@ def main():
         sw_l2_code = ""
         sw_l3 = info.get("INDU_CLASS_NAME_S", "")
         if sw_l3:
-            code_data = call_api("getPubInduCodeByCond-G",
-                                 {"induClassName": sw_l3, "pageNum": "1", "pageSize": "20"})
-            code_res = code_data.get("result", [])
-            # 优先取申万 2021，其次任意申万版本，最后回退有效记录
-            sw_2021 = [c for c in code_res
-                       if "申银万国" in (c.get("INDU_SYS_PAR") or "") and "2021" in (c.get("INDU_SYS_PAR") or "")]
-            sw_any = [c for c in code_res if "申银万国" in (c.get("INDU_SYS_PAR") or "")]
-            chosen = (sw_2021 or sw_any or [c for c in code_res if c.get("IS_VALID") == "是"] or code_res)
-            if chosen:
-                sw_l2_name = chosen[0].get("INDU_NAME2", "")
-                sw_l2_code = chosen[0].get("INDU_CODE2", "")
+            if sw_l3 in _indu_code_cache:
+                sw_l2_name, sw_l2_code = _indu_code_cache[sw_l3]
+            else:
+                code_data = call_api("getPubInduCodeByCond-G",
+                                     {"induClassName": sw_l3, "pageNum": "1", "pageSize": "20"})
+                code_res = code_data.get("result", [])
+                # 优先取申万 2021，其次任意申万版本，最后回退有效记录
+                sw_2021 = [c for c in code_res
+                           if "申银万国" in (c.get("INDU_SYS_PAR") or "") and "2021" in (c.get("INDU_SYS_PAR") or "")]
+                sw_any = [c for c in code_res if "申银万国" in (c.get("INDU_SYS_PAR") or "")]
+                chosen = (sw_2021 or sw_any or [c for c in code_res if c.get("IS_VALID") == "是"] or code_res)
+                if chosen:
+                    sw_l2_name = chosen[0].get("INDU_NAME2", "")
+                    sw_l2_code = chosen[0].get("INDU_CODE2", "")
+                _indu_code_cache[sw_l3] = (sw_l2_name, sw_l2_code)
 
         return {
             "code": code,
@@ -464,7 +484,7 @@ def main():
         }
 
     stock_detail = []
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with ThreadPoolExecutor(max_workers=15) as pool:
         futures = [pool.submit(query_stock_detail, r) for r in all_limit_up]
         for f in as_completed(futures):
             stock_detail.append(f.result())

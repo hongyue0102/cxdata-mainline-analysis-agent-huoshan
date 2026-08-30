@@ -14,9 +14,11 @@ CXDA Skill - 统一查询脚本（火山部署版）
 """
 
 import argparse
+import hashlib
 import json
 import re
 import sys
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -43,6 +45,7 @@ SUCCESS_CODE = "10000"
 _TIME_FMT = "%Y-%m-%d %H:%M:%S"
 _DISPLAY_TZ = timezone(timedelta(hours=8))
 _PAGE_SIZE_CACHE = None
+_PAGE_SIZE_LOCK = threading.RLock()
 
 _FORBIDDEN_PARAM_KEYS = {"authtoken", "userkey", "requestchannel"}
 
@@ -160,47 +163,156 @@ def _load_page_size_cache():
     return _PAGE_SIZE_CACHE
 
 
-def _fetch_api_limit_setting(api_id):
+def _page_size_cache_key(api_id, params):
+    """按接口和业务输入参数生成分页上限缓存键。
+
+    服务端的 maxPageSize 会随查询条件变化（如传 tradeDate 时返回 500，
+    不传时返回 20），必须按参数组合缓存，避免不同查询互相污染。
+    """
+    normalized_params = {
+        str(key): value
+        for key, value in dict(params or {}).items()
+        if str(key).lower() not in ("pagenum", "pagesize")
+    }
+    payload = json.dumps(
+        normalized_params,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return "{}:{}".format(api_id, digest)
+
+
+def _fetch_api_limit_setting(api_id, params=None):
+    """携带业务输入参数查询当前条件下的最优分页大小。
+
+    分页控制字段（pageSize/pageNum）不是业务条件，也不应被转发给分页配置接口。
+    尤其是 pageSize，必须避免调用方传入的值影响 maxPageSize 的计算。
+    """
     user_key = get_user_key()
     if not user_key:
         raise RuntimeError("未找到 CXDA_USER_KEY，请先通过 auth.py 完成认证")
 
+    request_data = {
+        key: value
+        for key, value in dict(params or {}).items()
+        if str(key).lower() not in ("pagesize", "pagenum")
+    }
+    request_data["userKey"] = user_key
+    request_data["apiMain"] = api_id
     return http_post_form(
         f"{BASE_URL}/mall/api_getApiLimitSetting.htm",
-        data={"userKey": user_key, "apiMain": api_id}
+        data=request_data,
     )
 
 
-def _get_api_max_page_size(api_id):
-    cache = _load_page_size_cache()
-    if api_id in cache:
-        return cache[api_id]
+def _get_api_max_page_size(api_id, params):
+    """获取当前业务输入对应的最优分页大小，并按参数组合缓存。
 
-    data = _fetch_api_limit_setting(api_id)
-    max_page_size = _normalize_max_page_size(data.get("maxPageSize") if isinstance(data, dict) else None)
-    if max_page_size is None:
-        msg = data.get("msg") if isinstance(data, dict) else ""
-        raise RuntimeError("查询接口最大分页失败：{}".format(msg or "未返回有效 maxPageSize"))
+    同一进程内的并发首屏请求共享一个获取动作（_PAGE_SIZE_LOCK），避免多个
+    线程同时发现缓存为空而重复调用 api_getApiLimitSetting。
+    """
+    cache_key = _page_size_cache_key(api_id, params)
+    with _PAGE_SIZE_LOCK:
+        cache = _load_page_size_cache()
+        if cache_key in cache:
+            return cache[cache_key]
 
-    cache[api_id] = max_page_size
-    return max_page_size
+        data = _fetch_api_limit_setting(api_id, params)
+        max_page_size = _normalize_max_page_size(
+            data.get("maxPageSize") if isinstance(data, dict) else None
+        )
+        if max_page_size is None:
+            msg = data.get("msg") if isinstance(data, dict) else ""
+            raise RuntimeError(
+                "查询接口最大分页失败：{}".format(msg or "未返回有效 maxPageSize")
+            )
+
+        cache[cache_key] = max_page_size
+        return max_page_size
 
 
-def _cache_api_max_page_size(api_id, data):
+def _cache_api_max_page_size(api_id, params, data):
     max_page_size = _normalize_max_page_size(data.get("maxPageSize") if isinstance(data, dict) else None)
     if max_page_size is None:
         return
+    cache_key = _page_size_cache_key(api_id, params)
     cache = _load_page_size_cache()
-    cache[api_id] = max_page_size
+    cache[cache_key] = max_page_size
 
 
 def _apply_default_page_size(api_id, params):
+    """忽略调用方 pageSize，统一使用接口返回的 maxPageSize（按当前业务条件动态获取）。"""
     normalized_params = dict(params or {})
     page_size = normalized_params.get("pageSize")
     if page_size is not None and str(page_size).strip() != "":
         return normalized_params
-    normalized_params["pageSize"] = str(_get_api_max_page_size(api_id))
+    normalized_params["pageSize"] = str(_get_api_max_page_size(api_id, params))
     return normalized_params
+
+
+# ── 进程内调用的取数函数（供 fetch_data.py import，消除 subprocess 开销） ──
+
+def run_api_inline(api_id, params) -> dict:
+    """进程内调用业务接口（不 spawn 子进程，不 output_json，直接返回 dict）。
+
+    供 fetch_data.py 等脚本 import 使用，消除三层 subprocess 的固定开销。
+    失败时返回 {"status": "failed", "error": msg}，不 sys.exit。
+    """
+    try:
+        _validate_api_id(api_id)
+    except ValueError as e:
+        return {"status": "failed", "error": str(e)}
+
+    accepted, error_response = check_terms_accepted()
+    if not accepted:
+        return {"status": "terms_not_accepted", "error": error_response.get("error", "条款未接受")}
+
+    try:
+        params = _apply_default_page_size(api_id, params)
+        token = ensure_token()
+
+        request_params = {"authtoken": token}
+        request_params.update(params)
+
+        data = http_get(
+            f"{BASE_URL}/webservice/cxdata/{api_id}.htm",
+            params=request_params
+        )
+        return data
+    except SystemExit:
+        return {"status": "failed", "error": "认证失败"}
+    except Exception as e:
+        return {"status": "failed", "error": str(e)}
+
+
+def get_page_size_inline(api_id, params=None) -> dict:
+    """进程内查询接口分页大小（不 spawn 子进程，不 output_json，直接返回 dict）。
+
+    供 fetch_data.py 等脚本 import 使用。传入 params 可获取当前业务条件下的
+    最优分页大小（服务端会根据查询参数返回不同的 maxPageSize）。
+    """
+    try:
+        _validate_api_id(api_id)
+    except ValueError as e:
+        return {"status": "failed", "error": str(e)}
+
+    accepted, error_response = check_terms_accepted()
+    if not accepted:
+        return {"status": "terms_not_accepted", "error": error_response.get("error", "条款未接受")}
+
+    user_key = get_user_key()
+    if not user_key:
+        return {"status": "failed", "error": "未找到 CXDA_USER_KEY"}
+
+    try:
+        data = _fetch_api_limit_setting(api_id, params)
+        _cache_api_max_page_size(api_id, params, data)
+        return data
+    except Exception as e:
+        return {"status": "failed", "error": str(e)}
 
 
 # ── 子命令：api ──────────────────────────────────────────────────────

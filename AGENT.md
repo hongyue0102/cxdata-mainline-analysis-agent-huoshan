@@ -67,7 +67,7 @@ cd <Agent目录>/skills/mainline-analysis/scripts && python3 fetch_data.py <日�
 ```
 
 > `<Agent目录>` 为本 Agent 解压后的根目录路径。
-> 日期格式 YYYY-MM-DD，不传则默认最近一个交易日。脚本通过 subprocess 调用 query.py 完成实际取数（含认证、token 缓存、gzip 解码），约 1-2 分钟。
+> 日期格式 YYYY-MM-DD，不传则默认最近一个交易日。脚本进程内直接调用 query.py 取数函数（含认证、token 缓存、gzip 解码、requests.Session 连接复用），约 10-30 秒。同一交易日重复运行命中缓存近乎秒回。
 
 ### Step 3: 数据分析
 

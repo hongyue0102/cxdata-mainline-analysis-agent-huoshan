@@ -4,18 +4,21 @@
 
 #### 输入参数
 
-| 参数名 | 参数中文名 | 数据类型 | 是否必填 | 默认值 |
-|--------|------------|----------|----------|----------|
-| stkCode | 股票代码 | 字符类型 | 否 |  |
-| stkShortName | 股票简称 | 字符类型 | 否 |  |
-| comChiName | 公司名称 | 字符类型 | 否 |  |
-| comAttrPar | 公司性质参数 | 数值类型 | 否 |  |
-| comContlrPar | 公司实控人性质参数 | 数值类型 | 否 |  |
-| induClassNameZ | 证监会行业名称 | 字符类型 | 否 |  |
-| induClassNameS | 申万行业名称 | 字符类型 | 否 |  |
-| induClassNameQ | 全球行业名称 | 字符类型 | 否 |  |
-| pageNum | 页码 | Integer | 是 | 1 |
-| pageSize | 每页条数 | Integer | 是 | 20 |
+| 参数名 | 参数中文名 | 数据类型 | 是否必填 | 默认值 | 示例值 |
+|--------|------------|----------|----------|----------|----------|
+| stkCode | 股票代码 | 字符类型 | 否 |  | 600512 |
+| stkShortName | 股票简称 | 字符类型 | 否 |  | 新里程 |
+| comChiName | 公司名称 | 字符类型 | 否 |  | 新里程健康科技集团股份有限公司 |
+| induUniCodeZ | 证监会行业代码 | 数值类型 | 否 |  | 401311622 |
+| induUniCodeS | 申万行业代码 | 数值类型 | 否 |  | 401309320 |
+| induUniCodeQ | 全球行业代码 | 数值类型 | 否 |  | 401311232 |
+| comAttrPar | 公司性质参数 | 数值类型 | 否 |  | 14 |
+| comContlrPar | 公司实控人性质参数 | 数值类型 | 否 |  | 14 |
+| induClassNameZ | 证监会行业名称 | 字符类型 | 否 |  | 化学药品制剂制造 |
+| induClassNameS | 申万行业名称 | 字符类型 | 否 |  | 医院 |
+| induClassNameQ | 全球行业名称 | 字符类型 | 否 |  | 保健护理服务 |
+| pageNum | 页码 | Integer | 是 | 1 |  |
+| pageSize | 每页条数 | Integer | 是 | 20 |  |
 
 #### 输出参数
 
@@ -84,5 +87,8 @@
 | INDU_CLASS_NAME_Z | 证监会行业名称 | 字符类型 |
 | INDU_CLASS_NAME_S | 申万行业名称 | 字符类型 |
 | INDU_CLASS_NAME_Q | 全球行业名称 | 字符类型 |
+| INDU_UNI_CODE_Z | 证监会行业代码 | 数值类型 |
+| INDU_UNI_CODE_S | 申万行业代码 | 数值类型 |
+| INDU_UNI_CODE_Q | 全球行业代码 | 数值类型 |
 
 

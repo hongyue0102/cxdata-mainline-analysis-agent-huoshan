@@ -37,7 +37,7 @@ cd <Agent目录>/skills/mainline-analysis/scripts && python3 fetch_data.py <日�
 
 > `<Agent目录>` 为本 Agent 解压后的根目录路径。
 
-日期格式 YYYY-MM-DD，不传则默认最近一个交易日。脚本会自动拉取全部所需数据到 `scripts/data/` 目录（约 2 分钟）。
+日期格式 YYYY-MM-DD，不传则默认最近一个交易日。脚本会自动拉取全部所需数据到 `scripts/data/<日期>/` 目录（约 10-30 秒，进程内取数 + 连接复用）。同一交易日重复运行命中缓存近乎秒回。
 
 ## Step 2: 数据分析
 
