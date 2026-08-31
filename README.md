@@ -101,6 +101,12 @@ cxdata-mainline-analysis-agent/
 - 鉴权方式改为环境变量 `CXDA_USER_KEY`，删除手机验证码鉴权流程、删除积分计费内容（`_cxda_policy` / `show_billing_info` / `--finalize` / `session confirm` / `package` 套餐查询等）
 - 删除 `references/auth-flow.md`，新增批量接口文档 `getStkBasicInfoByCond-P.md`
 
+**数据防滥用限制（agent层面）**：
+- fetch_data.py 新增日期范围限制，防止通过 agent 批量拉取/盗取市场数据
+- 日期范围限制：只能拉取最近 30 个自然日内的数据，拒绝远期历史
+- 调用频率限流由服务端（财新API层面）按 CXDA_USER_KEY 负责，agent层面不做机器级频率限制（多用户共享场景下不合理）
+- AGENT.md / SKILL.md 同步补充限制说明
+
 ### 2026-08-25 CLI 入参校验加固 + .gitignore 排除备份脚本目录
 
 **核心变更：CLI 入参防御 + 交付包整洁性**

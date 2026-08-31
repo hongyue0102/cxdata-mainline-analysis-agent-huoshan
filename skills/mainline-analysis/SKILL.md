@@ -99,6 +99,10 @@ cd <Agent目录>/skills/mainline-analysis/scripts && python3 analyze_data.py <�
 - `CXDA_USER_KEY`：16-128 位字母数字下划线连字符，通过环境变量传入
 - `BASE_URL`：API 基础地址（默认 `https://cxapi.ccxe.com.cn/cxda`）
 
+**🔒 数据防滥用限制（agent层面）**：
+- **日期范围限制**：只能拉取最近 30 个自然日内的数据，拒绝拉取远期历史数据
+- 调用频率限流由服务端（财新API层面）按 `CXDA_USER_KEY` 负责
+
 ---
 
 # 故障排除

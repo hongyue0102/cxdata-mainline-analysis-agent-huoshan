@@ -263,6 +263,19 @@ def main():
             today -= timedelta(days=2)
         date = today.strftime("%Y-%m-%d")
 
+    # 数据防滥用限制（agent层面）：
+    # 日期范围限制：只能拉取最近 30 个自然日内的数据，防止批量拉取全量历史数据
+    _MAX_LOOKBACK_DAYS = 30
+    _request_date = datetime.strptime(date, "%Y-%m-%d")
+    _earliest = datetime.now() - timedelta(days=_MAX_LOOKBACK_DAYS)
+    if _request_date < _earliest:
+        print(f"[ERROR] 日期 {date} 超出允许范围（仅允许最近 {_MAX_LOOKBACK_DAYS} 天），"
+              f"禁止拉取远期历史数据（数据防滥用限制）")
+        sys.exit(1)
+    if _request_date > datetime.now():
+        print(f"[ERROR] 日期 {date} 为未来日期，禁止拉取（数据防滥用限制）")
+        sys.exit(1)
+
     today_str = datetime.now().strftime("%Y-%m-%d")
     if date == today_str:
         now = datetime.now()
