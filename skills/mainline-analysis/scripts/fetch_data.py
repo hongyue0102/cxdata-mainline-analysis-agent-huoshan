@@ -350,13 +350,17 @@ def main():
     # ========================================
     print("[2/8] 申万一级行业涨跌幅（induLevel=1 批量拉取）...")
 
-    def fetch_industry_by_level(level: str) -> list:
-        page_size = _get_max_page_size("getInduDayQuoByCond-G", {"induLevel": level})
+    def fetch_industry_by_level(level: str, date_str: str) -> list:
+        # 必传 endDate：getInduDayQuoByCond-G 不传日期会返回最近多个交易日的快照，
+        # 同一行业会出现多条不同 END_DATE 的记录，排序后旧日期记录可能被误当作当日数据使用。
+        # 见 2026-08-31 非金属材料Ⅱ 事件（8/27 旧记录 day=10.92 排在 8/31 真值 day=0.62 前面）。
+        page_size = _get_max_page_size("getInduDayQuoByCond-G", {"induLevel": level, "endDate": date_str})
         all_results = []
         page = 1
         while True:
             data = call_api("getInduDayQuoByCond-G",
-                            {"induLevel": level, "pageNum": str(page), "pageSize": str(page_size)})
+                            {"induLevel": level, "endDate": date_str,
+                             "pageNum": str(page), "pageSize": str(page_size)})
             results = data.get("result", [])
             if not results:
                 break
@@ -366,11 +370,13 @@ def main():
                 break
             page += 1
             time.sleep(0.1)
+        # 兜底防御：即便服务端仍返回多日数据，也只保留目标交易日
         return [r for r in all_results
                 if r.get("REST_TYPE_PAR") == "后复权"
-                and r.get("WEIGH_TYPE_PAR") == "流通市值加权"]
+                and r.get("WEIGH_TYPE_PAR") == "流通市值加权"
+                and r.get("END_DATE") == date_str]
 
-    industry_quotes = fetch_industry_by_level("1")
+    industry_quotes = fetch_industry_by_level("1", date)
     if not industry_quotes:
         print("  [ERROR] 一级行业数据为空，API 调用可能失败，后续分析结果不可靠")
     industry_quotes.sort(key=lambda x: float(x.get("INDU_LIMIT_DAY", 0) or 0), reverse=True)
@@ -382,7 +388,7 @@ def main():
     # ========================================
     print("[2b/8] 申万二级行业涨跌幅（induLevel=2 批量拉取）...")
 
-    industry_l2_quotes = fetch_industry_by_level("2")
+    industry_l2_quotes = fetch_industry_by_level("2", date)
     if not industry_l2_quotes:
         print("  [ERROR] 二级行业数据为空，API 调用可能失败，后续分析结果不可靠")
     industry_l2_quotes.sort(key=lambda x: float(x.get("INDU_LIMIT_DAY", 0) or 0), reverse=True)

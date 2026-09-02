@@ -88,6 +88,23 @@ cxdata-mainline-analysis-agent/
 
 ## 变更历史
 
+### 2026-09-02 修复 fetch_industry_by_level 不传 endDate 导致多日数据混入主线
+
+**Bug 现象**：8月31日报告中，第二主线"非金属材料Ⅱ"显示日/周/月涨幅 10.92% / 15.24% / 27.09%，与真实值 0.62% / 13.27% / 43.92% 严重不符（核心主线"装修装饰Ⅱ"数据正常）。
+
+**根因**：`fetch_industry_by_level` 调用 `getInduDayQuoByCond-G` 时只传 `induLevel` + 分页参数，未传 `endDate`。该接口 `endDate` 为可选参数且无默认值，服务端在未指定时返回最近 3 个交易日（8/27、8/28、8/31）的快照，导致同一行业在 `industry_l2_quotes.json` 里出现多条不同 `END_DATE` 的记录（393 条 vs 正常 131 条）。
+
+**触发链路**：
+- `fetch_data.py` 按 `INDU_LIMIT_DAY` 降序排序后，8/27 旧记录（非金属材料Ⅱ 日涨 10.92%）被排到 8/31 真值（日涨 0.62%）之前
+- `analyze_data.py` 按列表 idx 给 `day_rank_score`，旧记录 idx 极小 → composite_score 高 → 被误选为第二主线
+- 核心主线"装修装饰Ⅱ"侥幸正确：因其 8/31 真值 day=3.78% 高于 8/27 旧值 0.71%，排序后 8/31 自然排在前面
+
+**修复**（`fetch_data.py:352-378`）：
+- `fetch_industry_by_level(level, date_str)`：调用 `getInduDayQuoByCond-G` 时附加 `endDate=date_str` 参数
+- 同步在 return 列表里加 `r.get("END_DATE") == date_str` 兜底过滤（即便服务端仍返回多日数据也只保留目标交易日）
+- 重跑 8/31 验证：L2 数据 393 条（混 3 天）→ 131 条（单日），非金属材料Ⅱ 仅剩 1 条且 END_DATE=2026-08-31，三个值与真实值完全一致
+- 第二主线由"非金属材料Ⅱ(8/27 旧数据)"→"通用设备(8/31 真实数据：日=3.04%/周=3.74%/月=26.03%/涨停7家)"
+
 ### 2026-08-30 动态分页提速 + 同步最新skill火山适配
 
 **动态分页提速（核心优化）**：
